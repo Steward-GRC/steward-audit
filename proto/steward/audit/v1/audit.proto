@@ -1,0 +1,122 @@
+// Copyright 2026 The Steward Authors
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package steward.audit.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1;auditv1";
+
+// AuditService reads and verifies the hash-chained audit trail. Records are
+// written by the event consumer, never through this API.
+service AuditService {
+  // QueryAuditLog returns a page of records, scoped to the caller's role.
+  rpc QueryAuditLog(QueryAuditLogRequest) returns (QueryAuditLogResponse);
+  // ExportAuditSegment returns a record range and the checkpoints inside it,
+  // for offline verification. The export is itself audited.
+  rpc ExportAuditSegment(ExportAuditSegmentRequest) returns (ExportAuditSegmentResponse);
+  // VerifyAuditChain re-walks a record range and its checkpoints on the server.
+  rpc VerifyAuditChain(VerifyAuditChainRequest) returns (VerifyAuditChainResponse);
+  // ListRecentEvents returns records that occurred at or after a time, for a
+  // polling tail.
+  rpc ListRecentEvents(ListRecentEventsRequest) returns (ListRecentEventsResponse);
+}
+
+// RequesterIdentity is the caller the gateway authenticated. Every RPC needs
+// it; an empty user_id is refused as unauthenticated.
+message RequesterIdentity {
+  string user_id = 1;
+  repeated string roles = 2;
+  repeated string groups = 3;
+}
+
+// AuditRecord is one link of the chain. Attributes and personal data are never
+// sent on the wire.
+message AuditRecord {
+  int64 id = 1;
+  string record_uuid = 2;
+  // "audit" or "activity".
+  string tier = 3;
+  string action = 4;
+  string actor_user_id = 5;
+  string subject = 6;
+  string group_id = 7;
+  google.protobuf.Timestamp occurred_at = 8;
+  string prev_hash = 9;
+  string record_hash = 10;
+  bool legal_basis_exempt = 11;
+}
+
+// Checkpoint is a Merkle root over a record range and its RFC 3161 token.
+message Checkpoint {
+  string checkpoint_uuid = 1;
+  string merkle_root = 2;
+  string anchor_type = 3;
+  string anchor_url = 4;
+  // The DER TimeStampResp the time-stamp authority returned.
+  bytes tsa_token = 5;
+  google.protobuf.Timestamp anchored_at = 6;
+  int64 from_record_id = 7;
+  int64 to_record_id = 8;
+}
+
+message QueryAuditLogRequest {
+  // "audit", "activity", or empty for both.
+  string tier = 1;
+  // Empty means every group; only auditors and compliance officers may ask.
+  string group_id = 2;
+  string actor_user_id = 3;
+  string subject = 4;
+  // 1 to 200; anything else means 50.
+  int32 page_size = 5;
+  // The next_page_token of the previous page.
+  string page_token = 6;
+  RequesterIdentity requester = 7;
+}
+
+message QueryAuditLogResponse {
+  repeated AuditRecord records = 1;
+  string next_page_token = 2;
+}
+
+message ExportAuditSegmentRequest {
+  int64 from_record_id = 1;
+  int64 to_record_id = 2;
+  RequesterIdentity requester = 3;
+}
+
+message ExportAuditSegmentResponse {
+  repeated AuditRecord records = 1;
+  repeated Checkpoint checkpoints = 2;
+}
+
+message VerifyAuditChainRequest {
+  int64 from_record_id = 1;
+  int64 to_record_id = 2;
+  RequesterIdentity requester = 3;
+}
+
+message VerifyAuditChainResponse {
+  bool valid = 1;
+  int32 records_checked = 2;
+  repeated string errors = 3;
+  int32 checkpoints_checked = 4;
+}
+
+message ListRecentEventsRequest {
+  // Unset means one hour ago.
+  google.protobuf.Timestamp since_timestamp = 1;
+  // Exact match on actor_user_id; empty matches all.
+  string actor_filter = 2;
+  // Exact match on action; empty matches all.
+  string event_type_filter = 3;
+  // 1 to 200; anything else means 50.
+  int32 limit = 4;
+  RequesterIdentity requester = 5;
+}
+
+message ListRecentEventsResponse {
+  repeated AuditRecord records = 1;
+}
