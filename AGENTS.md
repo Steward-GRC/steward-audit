@@ -55,5 +55,5 @@ Follow the logging rules in `CLAUDE.md`. In short:
 - Open every PR as a draft. CI skips drafts, so run the full checks locally, push once they pass,
   and mark the PR ready when the work is finished; see CLAUDE.md "CI and Actions minutes".
 - Test data comes from `internal/fixture` (the design brief's sample data); don't type literals.
-- Until go-apperr v1.2.0 is released the build uses a git-ignored `go.work` against its PR
-  branch; never add a `replace` or a pseudo-version.
+- Dependencies are released versions only: never a `replace`, a pseudo-version or a committed
+  `go.work`.

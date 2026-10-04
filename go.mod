@@ -5,7 +5,7 @@ go 1.26.3
 toolchain go1.26.6
 
 require (
-	github.com/Bugs5382/go-apperr v1.2.0
+	github.com/Bugs5382/go-apperr v1.2.1
 	github.com/Bugs5382/go-log v1.3.0
 	github.com/Bugs5382/go-otel v1.3.2
 	github.com/Bugs5382/go-postgres v1.2.2
@@ -90,6 +90,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
