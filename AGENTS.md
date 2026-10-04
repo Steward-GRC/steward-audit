@@ -19,7 +19,8 @@ Two things to know before changing it:
 ## Layout
 
 - `cmd/server/` - the entry point and wiring
-- `proto/steward/audit/v1/`, `gen/go/` - the API and its generated stubs (`task proto`)
+- `proto/steward/audit/v1/`, `gen/go/` - the API, the `AuditEvent` publishers send, and their
+  generated stubs (`task proto`)
 - `internal/chain`, `internal/merkle` - the hash chain, the Merkle tree, verification
 - `internal/anchor`, `internal/checkpoint` - RFC 3161 anchoring and the checkpointer
 - `internal/store` - Postgres stores; `migrations/` - the baseline schema

@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ingest turns events from the broker into chained records. Services
-// publish to the "audit" topic exchange with routing key audit.audit (the
-// audit tier) or audit.activity (the activity tier); the body is an Event in
-// JSON. The tier in the body is the one stored.
+// publish a steward.audit.v1.AuditEvent, as protobuf binary with the
+// ContentType content type, to the "audit" topic exchange with routing key
+// audit.audit (the audit tier) or audit.activity (the activity tier). The tier
+// in the body is the one stored.
 package ingest
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
+	"mime"
 
 	"github.com/Bugs5382/go-rabbitmq"
+	"google.golang.org/protobuf/proto"
 
+	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
 	"github.com/Steward-GRC/steward-audit/internal/store"
 )
 
@@ -27,16 +29,16 @@ const (
 	consumerTag        = "audit-service"
 )
 
-// Event is the message body publishers send.
-type Event struct {
-	Tier             string            `json:"tier"`
-	Action           string            `json:"action"`
-	ActorUserID      string            `json:"actor_user_id,omitempty"`
-	Subject          string            `json:"subject,omitempty"`
-	GroupID          string            `json:"group_id,omitempty"`
-	OccurredAt       time.Time         `json:"occurred_at"`
-	Attributes       map[string]string `json:"attributes,omitempty"`
-	LegalBasisExempt bool              `json:"legal_basis_exempt,omitempty"`
+// ContentType is the AMQP content type every event is published with.
+const ContentType = "application/protobuf; proto=steward.audit.v1.AuditEvent"
+
+const mediaType = "application/protobuf"
+
+var eventName = string((&auditv1.AuditEvent{}).ProtoReflect().Descriptor().FullName())
+
+var tierNames = map[auditv1.Tier]string{
+	auditv1.Tier_TIER_AUDIT:    "audit",
+	auditv1.Tier_TIER_ACTIVITY: "activity",
 }
 
 // Appender stores a record.
@@ -50,33 +52,46 @@ type Handler struct{ store Appender }
 // NewHandler returns a Handler that appends to s.
 func NewHandler(s Appender) *Handler { return &Handler{store: s} }
 
-// Handle stores one event. A body that can never be stored is dead-lettered;
-// any other error is returned for the consumer to settle.
-func (h *Handler) Handle(ctx context.Context, _ string, body []byte) error {
-	var ev Event
-	if err := json.Unmarshal(body, &ev); err != nil {
-		return fmt.Errorf("ingest: decode event: %v: %w", err, rabbitmq.ErrDeadLetter)
-	}
-	if err := ev.validate(); err != nil {
+// Handle stores one event. A message that can never be stored is
+// dead-lettered; any other error is returned for the consumer to settle.
+func (h *Handler) Handle(ctx context.Context, d rabbitmq.Delivery) error {
+	in, err := decode(d)
+	if err != nil {
 		return fmt.Errorf("ingest: %v: %w", err, rabbitmq.ErrDeadLetter)
 	}
-	_, err := h.store.AppendRecord(ctx, store.RecordInput{
-		Tier: ev.Tier, Action: ev.Action, ActorUserID: ev.ActorUserID, Subject: ev.Subject, GroupID: ev.GroupID,
-		OccurredAt: ev.OccurredAt, Attributes: ev.Attributes, LegalBasisExempt: ev.LegalBasisExempt,
-	})
+	_, err = h.store.AppendRecord(ctx, in)
 	return err
 }
 
-func (ev Event) validate() error {
-	switch {
-	case ev.Tier != "audit" && ev.Tier != "activity":
-		return fmt.Errorf("tier %q is not audit or activity", ev.Tier)
-	case ev.Action == "":
-		return fmt.Errorf("event has no action")
-	case ev.OccurredAt.IsZero():
-		return fmt.Errorf("event has no occurred_at")
+func decode(d rabbitmq.Delivery) (store.RecordInput, error) {
+	mt, params, err := mime.ParseMediaType(d.ContentType)
+	if err != nil {
+		return store.RecordInput{}, fmt.Errorf("content type %q: %v", d.ContentType, err)
 	}
-	return nil
+	if mt != mediaType || params["proto"] != eventName {
+		return store.RecordInput{}, fmt.Errorf("content type %q is not %q", d.ContentType, ContentType)
+	}
+	var ev auditv1.AuditEvent
+	if err := proto.Unmarshal(d.Body, &ev); err != nil {
+		return store.RecordInput{}, fmt.Errorf("decode event: %v", err)
+	}
+	tier, ok := tierNames[ev.GetTier()]
+	switch {
+	case !ok:
+		return store.RecordInput{}, fmt.Errorf("tier %v is not audit or activity", ev.GetTier())
+	case ev.GetAction() == "":
+		return store.RecordInput{}, fmt.Errorf("event has no action")
+	case ev.GetOccurredAt() == nil:
+		return store.RecordInput{}, fmt.Errorf("event has no occurred_at")
+	}
+	if err := ev.GetOccurredAt().CheckValid(); err != nil {
+		return store.RecordInput{}, fmt.Errorf("occurred_at: %v", err)
+	}
+	return store.RecordInput{
+		Tier: tier, Action: ev.GetAction(), ActorUserID: ev.GetActorUserId(), Subject: ev.GetSubject(),
+		GroupID: ev.GetGroupId(), OccurredAt: ev.GetOccurredAt().AsTime(), Attributes: ev.GetAttributes(),
+		LegalBasisExempt: ev.GetLegalBasisExempt(),
+	}, nil
 }
 
 // ConsumerConfig is the topology and settlement the consumer runs with. A
@@ -97,7 +112,11 @@ func ConsumerConfig() rabbitmq.ConsumerConfig {
 
 // Consume runs the consumer on conn until ctx is cancelled.
 func (h *Handler) Consume(ctx context.Context, conn *rabbitmq.Conn) error {
-	return conn.Consume(ctx, ConsumerConfig(), func(ctx context.Context, d rabbitmq.Delivery) error {
-		return h.Handle(ctx, d.RoutingKey, d.Body)
-	})
+	return h.Consumer(conn).Run(ctx)
+}
+
+// Consumer returns the consumer Consume runs, for a caller that needs to know
+// when it is ready.
+func (h *Handler) Consumer(conn *rabbitmq.Conn) *rabbitmq.Consumer {
+	return conn.NewConsumer(ConsumerConfig(), h.Handle)
 }

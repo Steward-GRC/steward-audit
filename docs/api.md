@@ -4,36 +4,40 @@ The service writes records only from events, and serves reads and verification o
 
 ## Events in
 
-Publishers send JSON to the `audit` topic exchange (durable). The service declares the durable queue
-`audit.service.queue` and binds it to two routing keys:
+Publishers send a `steward.audit.v1.AuditEvent` (`proto/steward/audit/v1/audit.proto`) to the
+`audit` topic exchange (durable), serialized as protobuf binary with the AMQP content type:
+
+```text
+application/protobuf; proto=steward.audit.v1.AuditEvent
+```
+
+A publisher generates its own stubs from this repo's `proto/` at a pinned commit; it never imports
+this module. The service declares the durable queue `audit.service.queue` and binds it to two
+routing keys:
 
 | Routing key | Tier |
 | --- | --- |
-| `audit.audit` | `audit`: kept indefinitely by default, never purged when legal-basis exempt |
-| `audit.activity` | `activity`: kept for the activity retention (730 days by default) |
+| `audit.audit` | `TIER_AUDIT`: kept indefinitely by default, never purged when legal-basis exempt |
+| `audit.activity` | `TIER_ACTIVITY`: kept for the activity retention (730 days by default) |
 
-The body:
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `tier` | yes | `TIER_AUDIT` or `TIER_ACTIVITY`; the tier in the body is the one stored |
+| `action` | yes | what happened, such as `policy.published` |
+| `actor_user_id` | no | who did it; empty for system events; during act-as, the admin at the keyboard |
+| `subject` | no | what it happened to, as `<kind>:<id>` |
+| `group_id` | no | the group that scopes who may read the record |
+| `occurred_at` | yes | when it happened, stamped by the publisher |
+| `attributes` | no | extra detail, string to string |
+| `legal_basis_exempt` | no | the record is never purged |
 
-```json
-{
-  "tier": "audit",
-  "action": "policy.published",
-  "actor_user_id": "bob",
-  "subject": "policy:POL-FACILITIES-000001",
-  "group_id": "facilities-team",
-  "occurred_at": "2026-01-01T12:30:00.123456Z",
-  "attributes": {"version": "v1"},
-  "legal_basis_exempt": true
-}
-```
+Attributes are hashed into the chain but never returned by the API, so don't put anything in them a
+reader of the raw export shouldn't see.
 
-`tier` (`audit` or `activity`), `action` and `occurred_at` are required. The tier in the body is the
-one stored. Attributes are hashed into the chain but never returned by the API, so don't put
-anything in them a reader of the raw export shouldn't see.
-
-A body that can't be stored (not JSON, an unknown tier, no action or time) is dead-lettered. Any
-other failure is not requeued either: the message goes to the queue's dead-letter exchange, which
-the broker policy sets, instead of looping.
+JSON bodies are not accepted. A message that can't be stored (another content type, a body that
+isn't an `AuditEvent`, an unset or unknown tier, no action, no or an invalid time) is
+dead-lettered. Any other failure is not requeued either: the message goes to the queue's
+dead-letter exchange, which the broker policy sets, instead of looping.
 
 ## gRPC
 
