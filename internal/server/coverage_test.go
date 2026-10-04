@@ -31,8 +31,8 @@ func TestAuditServerImplementsEveryRPC(t *testing.T) {
 	for i := 0; i < iface.NumMethod(); i++ {
 		m := iface.Method(i)
 		mt := m.Type
-		if mt.NumIn() != 2 || mt.NumOut() != 2 || mt.In(0) != ctxType || mt.In(1).Kind() != reflect.Ptr ||
-			mt.Out(0).Kind() != reflect.Ptr || !mt.Out(1).Implements(errType) {
+		if mt.NumIn() != 2 || mt.NumOut() != 2 || mt.In(0) != ctxType || mt.In(1).Kind() != reflect.Pointer ||
+			mt.Out(0).Kind() != reflect.Pointer || !mt.Out(1).Implements(errType) {
 			continue
 		}
 		invoked++
