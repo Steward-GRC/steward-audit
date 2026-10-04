@@ -10,20 +10,28 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"sync"
 )
 
-// EnvKMS derives each alias's key as HMAC-SHA-256(master, alias). It is for
-// development and tests only: erasures live in memory and are forgotten on
-// restart, so a shredded subject's key comes back.
+// Registry records which aliases exist and which are erased. It is what makes
+// an erasure outlast the process.
+type Registry interface {
+	// Register records alias if it is new and reports whether it is erased.
+	Register(ctx context.Context, alias string) (erased bool, err error)
+	// MarkErased records alias as erased, whether or not it was registered.
+	MarkErased(ctx context.Context, alias string) error
+}
+
+// EnvKMS derives each alias's key as HMAC-SHA-256(master, alias) and keeps
+// erasures in a Registry. It is for development and tests: anyone holding the
+// master key can still derive an erased key, so production needs a key
+// service that destroys the key material itself.
 type EnvKMS struct {
 	master []byte
-	mu     sync.RWMutex
-	erased map[string]bool
+	reg    Registry
 }
 
 // NewEnvKMS returns an EnvKMS for a base64 master key of at least 32 bytes.
-func NewEnvKMS(masterB64 string) (*EnvKMS, error) {
+func NewEnvKMS(masterB64 string, reg Registry) (*EnvKMS, error) {
 	if masterB64 == "" {
 		return nil, errors.New("kms: a master key is required")
 	}
@@ -34,14 +42,15 @@ func NewEnvKMS(masterB64 string) (*EnvKMS, error) {
 	if len(master) < 32 {
 		return nil, errors.New("kms: the master key must be at least 32 bytes")
 	}
-	return &EnvKMS{master: master, erased: make(map[string]bool)}, nil
+	return &EnvKMS{master: master, reg: reg}, nil
 }
 
 // GetOrCreate returns alias's key, or ErrKeyErased.
-func (e *EnvKMS) GetOrCreate(_ context.Context, alias string) ([]byte, error) {
-	e.mu.RLock()
-	erased := e.erased[alias]
-	e.mu.RUnlock()
+func (e *EnvKMS) GetOrCreate(ctx context.Context, alias string) ([]byte, error) {
+	erased, err := e.reg.Register(ctx, alias)
+	if err != nil {
+		return nil, fmt.Errorf("kms: register %q: %w", alias, err)
+	}
 	if erased {
 		return nil, ErrKeyErased
 	}
@@ -50,10 +59,10 @@ func (e *EnvKMS) GetOrCreate(_ context.Context, alias string) ([]byte, error) {
 	return mac.Sum(nil), nil
 }
 
-// Delete marks alias erased.
-func (e *EnvKMS) Delete(_ context.Context, alias string) error {
-	e.mu.Lock()
-	e.erased[alias] = true
-	e.mu.Unlock()
+// Delete marks alias erased in the registry.
+func (e *EnvKMS) Delete(ctx context.Context, alias string) error {
+	if err := e.reg.MarkErased(ctx, alias); err != nil {
+		return fmt.Errorf("kms: erase %q: %w", alias, err)
+	}
 	return nil
 }

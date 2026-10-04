@@ -34,7 +34,10 @@ The key goes first: if step 2 or 3 fails the subject is already protected, and t
 (`ErrPartialShred`) says which step to retry. Audit-tier records keep their ciphertext under their
 own legal basis; with the key gone it is unreadable all the same.
 
-The only key provider today derives keys from a master key and keeps erasures in memory. It is for
-development and tests: a restart forgets the erasures. Nothing exposes shred through the API yet.
+The only key provider today derives keys from a master key and records each subject's key alias,
+and its erasure, in `subject_encryption_keys`, so an erasure survives a restart. It is for
+development and tests: anyone holding the master key can still derive an erased key, so production
+needs a key service that destroys the key material itself. Nothing exposes shred through the API
+yet.
 
 Keys must move with the audit data in a migration, or erased subjects become readable again.

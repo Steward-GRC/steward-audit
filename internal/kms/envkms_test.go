@@ -7,14 +7,41 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"testing"
 )
 
 // 32 zero bytes, base64. A test key only.
 const testMaster = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
+type memRegistry struct {
+	mu     sync.Mutex
+	known  map[string]bool
+	erased map[string]bool
+}
+
+func newMemRegistry() *memRegistry {
+	return &memRegistry{known: map[string]bool{}, erased: map[string]bool{}}
+}
+
+func (m *memRegistry) Register(_ context.Context, alias string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.known[alias] = true
+	return m.erased[alias], nil
+}
+
+func (m *memRegistry) MarkErased(_ context.Context, alias string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.known[alias] = true
+	m.erased[alias] = true
+	return nil
+}
+
 func TestEnvKMSGetOrCreateReturnsSameKey(t *testing.T) {
-	k, err := NewEnvKMS(testMaster)
+	reg := newMemRegistry()
+	k, err := NewEnvKMS(testMaster, reg)
 	if err != nil {
 		t.Fatalf("NewEnvKMS: %v", err)
 	}
@@ -36,10 +63,13 @@ func TestEnvKMSGetOrCreateReturnsSameKey(t *testing.T) {
 	if bytes.Equal(key1, other) {
 		t.Fatal("different aliases must derive different keys")
 	}
+	if !reg.known["user:erin"] {
+		t.Fatal("a key handed out must be registered")
+	}
 }
 
 func TestEnvKMSDeleteErasesTheKey(t *testing.T) {
-	k, _ := NewEnvKMS(testMaster)
+	k, _ := NewEnvKMS(testMaster, newMemRegistry())
 	if _, err := k.GetOrCreate(context.Background(), "user:bob"); err != nil {
 		t.Fatalf("GetOrCreate: %v", err)
 	}
@@ -51,13 +81,27 @@ func TestEnvKMSDeleteErasesTheKey(t *testing.T) {
 	}
 }
 
+// The erasure lives in the registry, so a new provider on the same registry
+// (a restart) still refuses the key.
+func TestEnvKMSErasureSurvivesARestart(t *testing.T) {
+	reg := newMemRegistry()
+	first, _ := NewEnvKMS(testMaster, reg)
+	if err := first.Delete(context.Background(), "user:erin"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	restarted, _ := NewEnvKMS(testMaster, reg)
+	if _, err := restarted.GetOrCreate(context.Background(), "user:erin"); !errors.Is(err, ErrKeyErased) {
+		t.Fatalf("expected ErrKeyErased after a restart, got %v", err)
+	}
+}
+
 func TestNewEnvKMSRejectsBadMasterKeys(t *testing.T) {
 	for name, master := range map[string]string{
 		"empty":      "",
 		"not base64": "not base64!",
 		"too short":  "AAAAAAAAAAAAAAAAAAAAAA==",
 	} {
-		if _, err := NewEnvKMS(master); err == nil {
+		if _, err := NewEnvKMS(master, newMemRegistry()); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
