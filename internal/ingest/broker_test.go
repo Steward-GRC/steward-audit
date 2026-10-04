@@ -99,6 +99,12 @@ func (s *recordingStore) AppendRecord(_ context.Context, in store.RecordInput) (
 	return &store.Record{ID: 1, RecordInput: in, RecordHash: "fakehash"}, nil
 }
 
+func (s *recordingStore) attemptsFor(action string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts[action]
+}
+
 // runConsumer starts the handler's consumer on a broker and waits until it is
 // consuming, so nothing published afterwards is unroutable.
 func runConsumer(t *testing.T, s Appender) *rabbitmq.Publisher {
@@ -177,5 +183,25 @@ func TestBrokerRoundTrip(t *testing.T) {
 	case extra := <-s.stored:
 		t.Fatalf("a malformed message was stored: %+v", extra)
 	default:
+	}
+}
+
+// A store failure is not requeued: the message goes to the dead-letter
+// exchange instead of being delivered again.
+func TestBrokerStoreFailureIsNotRequeued(t *testing.T) {
+	s := newRecordingStore(fixture.PolicyViewed)
+	pub := runConsumer(t, s)
+
+	failing := &auditv1.AuditEvent{Tier: auditv1.Tier_TIER_ACTIVITY, Action: fixture.PolicyViewed, OccurredAt: timestamppb.Now()}
+	next := &auditv1.AuditEvent{Tier: auditv1.Tier_TIER_AUDIT, Action: fixture.PolicyPublished, OccurredAt: timestamppb.Now()}
+	publish(t, pub, RoutingKeyActivity, ContentType, body(t, failing))
+	publish(t, pub, RoutingKeyAudit, ContentType, body(t, next))
+
+	if got := waitStored(t, s); got.Action != fixture.PolicyPublished {
+		t.Fatalf("stored %q", got.Action)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if n := s.attemptsFor(fixture.PolicyViewed); n != 1 {
+		t.Fatalf("the failed event was handled %d times, want 1", n)
 	}
 }

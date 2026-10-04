@@ -105,9 +105,8 @@ func ConsumerConfig() rabbitmq.ConsumerConfig {
 			{Queue: Queue, Exchange: Exchange, RoutingKey: RoutingKeyAudit},
 			{Queue: Queue, Exchange: Exchange, RoutingKey: RoutingKeyActivity},
 		},
-		ConsumerTag:    consumerTag,
-		RequeueOnError: false,
-	}
+		ConsumerTag: consumerTag,
+	}.NoRequeue()
 }
 
 // Consume runs the consumer on conn until ctx is cancelled.
