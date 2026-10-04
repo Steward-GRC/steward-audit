@@ -5,36 +5,34 @@ hook-enforced rules). Keep this file current when the build, layout, or public A
 
 ## What this is
 
-Tamper-evident, hash-chained audit service for Steward
+Tamper-evident, hash-chained audit service for Steward: a Go gRPC service that consumes audit
+events from RabbitMQ into an append-only SHA-256 hash chain in Postgres, anchors Merkle checkpoints
+with an RFC 3161 time-stamp authority, and serves query, export, verify and tail RPCs.
 
-<!-- Fill in: what the project does, what it ships (library, service, action, CLI), and the one or
-two things an agent must understand before changing it. -->
+Two things to know before changing it:
 
-## Using steward-audit
-
-<!-- If this project is consumed by others (a library/plugin/action), describe the contract a
-consumer must respect: the single entry point, the public surface, required options, and anything
-that must not be bypassed. Delete this section for a leaf application. -->
+- The chain hash and Merkle layouts are fixed (`internal/chain/golden_test.go`). Changing them
+  breaks every stored and migrated chain.
+- Attributes and personal data never go on the wire, and store errors never reach the caller: they
+  are coded through `internal/auditerr`.
 
 ## Layout
 
-<!-- The directories that matter and what lives in each. Keep it short; point at the entry points. -->
-
-- `src/` - <what>
-- `<tests dir>/` - <what>
+- `cmd/server/` - the entry point and wiring
+- `proto/steward/audit/v1/`, `gen/go/` - the API and its generated stubs (`task proto`)
+- `internal/chain`, `internal/merkle` - the hash chain, the Merkle tree, verification
+- `internal/anchor`, `internal/checkpoint` - RFC 3161 anchoring and the checkpointer
+- `internal/store` - Postgres stores; `migrations/` - the baseline schema
+- `internal/ingest` - the event consumer; `internal/server` - the gRPC handlers and server
+- `internal/kms`, `internal/pii`, `internal/shred` - keys, encryption, crypto-shred
+- `internal/auditerr` - coded errors (band 2); `internal/fixture` - test sample data
 
 ## Build, test, lint
 
-<!-- The exact commands. Pull these from package.json scripts (npm), the Taskfile (Go/Task), or
-pyproject (Python) so they stay accurate. -->
-
-- Build: `<command>`
-- Test: `<command>` (note any service/fixture the integration tests require)
-- Lint: `<command>`
-- Package checks (npm packages), after a build: `npm run check:pack` (contents and ceiling),
-  `npm run check:pack:growth` (growth against the last release), `npm run check:install`
-  (install the tarball, import ESM and CJS); see CLAUDE.md "npm package contents"
-- License headers / docs: `<command>`
+- Build: `task build`
+- Test: `task test` (the store tests need Docker for testcontainers, or `DATABASE_TEST_DSN`)
+- Lint: `task lint`; proto: `task proto`
+- License headers: `task license`; error-code doc: `task docs`
 
 ## Logging
 
@@ -56,4 +54,6 @@ Follow the logging rules in `CLAUDE.md`. In short:
   `.claude/hooks` (run `bash .claude/hooks/install.sh` once per clone).
 - Open every PR as a draft. CI skips drafts, so run the full checks locally, push once they pass,
   and mark the PR ready when the work is finished; see CLAUDE.md "CI and Actions minutes".
-- <project-specific conventions, non-obvious constraints, and traps an agent should know>
+- Test data comes from `internal/fixture` (the design brief's sample data); don't type literals.
+- Until go-apperr v1.2.0 is released the build uses a git-ignored `go.work` against its PR
+  branch; never add a `replace` or a pseudo-version.
