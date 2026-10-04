@@ -24,6 +24,45 @@ service AuditService {
   rpc ListRecentEvents(ListRecentEventsRequest) returns (ListRecentEventsResponse);
 }
 
+// Tier is the retention class an event is stored in.
+enum Tier {
+  // Not a valid tier: an event without one is dead-lettered.
+  TIER_UNSPECIFIED = 0;
+  // Kept indefinitely by default; published with routing key audit.audit.
+  TIER_AUDIT = 1;
+  // Kept for the activity retention; published with routing key
+  // audit.activity.
+  TIER_ACTIVITY = 2;
+}
+
+// AuditEvent is the message services publish to the "audit" topic exchange,
+// serialized as protobuf binary with the AMQP content type
+// "application/protobuf; proto=steward.audit.v1.AuditEvent". Each event
+// becomes one record of the hash chain, so every field below is stored and
+// hashed as sent.
+message AuditEvent {
+  // Required. The tier the record is stored in; it wins over the routing key.
+  Tier tier = 1;
+  // Required. What happened, as a dotted verb such as "policy.published".
+  string action = 2;
+  // The user who did it. Empty for system events. During act-as, the admin
+  // actually at the keyboard.
+  string actor_user_id = 3;
+  // What it happened to, as "<kind>:<id>", such as "policy:POL-000001".
+  string subject = 4;
+  // The group the subject belongs to, which scopes who may read the record.
+  // Empty when the event belongs to no group.
+  string group_id = 5;
+  // Required. When it happened, set by the publisher at the time of the
+  // action. It is the record's time, not the time the event was received.
+  google.protobuf.Timestamp occurred_at = 6;
+  // Extra detail. Hashed into the chain but never returned by the API, so it
+  // must not hold anything a reader of a raw export shouldn't see.
+  map<string, string> attributes = 7;
+  // Marks a record the law requires to be kept: it is never purged.
+  bool legal_basis_exempt = 8;
+}
+
 // RequesterIdentity is the caller the gateway authenticated. Every RPC needs
 // it; an empty user_id is refused as unauthenticated.
 message RequesterIdentity {
