@@ -36,6 +36,9 @@ const (
 	PolicyViewed    = "policy.viewed"
 )
 
+// ErinKeyAlias is the personal-data key alias for Erin.
+const ErinKeyAlias = "subject-key-erin"
+
 // DocAddress is an address from the documentation range.
 const DocAddress = "192.0.2.10"
 

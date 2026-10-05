@@ -63,7 +63,7 @@ func TestAppendRecordPersistsAllFields(t *testing.T) {
 	in := RecordInput{
 		Tier: "audit", Action: "user.consent.recorded", ActorUserID: fixture.Erin, Subject: fixture.UserErin,
 		GroupID: fixture.FinanceTeam, OccurredAt: time.Now().UTC().Truncate(time.Microsecond),
-		Attributes: map[string]string{"a": "1", "b": "2"}, PIISubjectKey: "key-3f2a9c41",
+		Attributes: map[string]string{"a": "1", "b": "2"}, PIISubjectKey: fixture.ErinKeyAlias,
 		PIICiphertext: []byte{0x01, 0x02, 0x03, 0x04}, LegalBasisExempt: true, RetainedUntil: &retain,
 	}
 	got, err := rs.AppendRecord(ctx, in)
