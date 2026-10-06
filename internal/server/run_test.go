@@ -35,7 +35,7 @@ func TestRunServesHealthRecoversPanicsAndStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Serve(ctx, lis, log.Nop(), func(s *grpc.Server) { auditv1.RegisterAuditServiceServer(s, panicky{}) })
+		done <- Serve(ctx, lis, log.Nop(), Options{}, func(s *grpc.Server) { auditv1.RegisterAuditServiceServer(s, panicky{}) })
 	}()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

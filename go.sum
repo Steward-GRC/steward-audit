@@ -6,6 +6,8 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEK
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/Bugs5382/go-apperr v1.2.1 h1:+IFP+LQWu4BTPDX2ezkjEhfvn5HTvBHirL2b77EXmvU=
 github.com/Bugs5382/go-apperr v1.2.1/go.mod h1:IX+TmCj35CSUNK/JU16pPTn4L4qpDreVOc7i4Q3dxy4=
+github.com/Bugs5382/go-buildinfo v1.0.0 h1:oxFnQOlYxH9MtCsDALz3AP4eEKW8uFMTJVKSD8pa6qA=
+github.com/Bugs5382/go-buildinfo v1.0.0/go.mod h1:5WxMB/NqiSjXGv23QQWNSySwpT5HldJ2iL8NQ/MkVbc=
 github.com/Bugs5382/go-log v1.3.0 h1:lJv2iv6yL9l1Eqii62ArcJ1eoKbpLFdrY7L9gPNSqcI=
 github.com/Bugs5382/go-log v1.3.0/go.mod h1:OGgIWWKKNg2AXVJlbVJZb/s8dnqqsrKwWznYXik547E=
 github.com/Bugs5382/go-otel v1.3.2 h1:RNedETq9P9RFpxfJf8VWYQlBkqdf0RA8is8Oh8RdyTM=
@@ -62,6 +64,8 @@ github.com/go-ole/go-ole v1.2.6 h1:/Fpf6oFPoeFik9ty7siob0G6Ke8QvQEuVcuChpwXzpY=
 github.com/go-ole/go-ole v1.2.6/go.mod h1:pprOEPIfldk/42T2oK7lQ4v4JSDwmV0As9GaiUsvbm0=
 github.com/gogo/protobuf v1.3.2 h1:Ov1cvc58UF3b5XjBnZv7+opcTcQFZebYjWzi34vdm4Q=
 github.com/gogo/protobuf v1.3.2/go.mod h1:P1XiOD3dCwIKUDQYPy72D8LYyHL2YPYrpS2s69NZV8Q=
+github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
+github.com/golang-jwt/jwt/v5 v5.3.1/go.mod h1:fxCRLWMO43lRc8nhHWY6LGqRcf+1gQWArsqaEUEa5bE=
 github.com/golang-migrate/migrate/v4 v4.19.1 h1:OCyb44lFuQfYXYLx1SCxPZQGU7mcaZ7gH9yH4jSFbBA=
 github.com/golang-migrate/migrate/v4 v4.19.1/go.mod h1:CTcgfjxhaUtsLipnLoQRWCrjYXycRz/g5+RWDuYgPrE=
 github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=

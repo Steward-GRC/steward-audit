@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 // Config is every setting the service runs with.
@@ -19,7 +21,15 @@ type Config struct {
 	MigrationsDir string
 	RabbitURL     string
 	GRPCPort      string
-	OTLPEndpoint  string
+	// ProbePort serves /livez and /readyz over plain HTTP.
+	ProbePort    string
+	OTLPEndpoint string
+
+	// WorkloadAuth verifies the callers' workload tokens. It is set when
+	// WorkloadAuthEnabled; WORKLOAD_AUTH=disabled is the only way to turn it
+	// off.
+	WorkloadAuth        workloadauth.Config
+	WorkloadAuthEnabled bool
 
 	// TSAURL is the RFC 3161 time-stamp authority. Empty turns checkpoint
 	// anchoring off: the adopter chooses the authority.
@@ -41,6 +51,7 @@ func Load(getenv func(string) string) (Config, error) {
 		MigrationsDir: or("MIGRATIONS_DIR", "migrations"),
 		RabbitURL:     getenv("RABBITMQ_URL"),
 		GRPCPort:      or("GRPC_PORT", "9090"),
+		ProbePort:     or("PROBE_PORT", "8080"),
 		OTLPEndpoint:  or("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
 		TSAURL:        getenv("AUDIT_TSA_URL"),
 	}
@@ -59,6 +70,9 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 	var err error
+	if c.WorkloadAuth, c.WorkloadAuthEnabled, err = workloadauth.ServerConfigFromEnv(getenv); err != nil {
+		errs = append(errs, err)
+	}
 	if c.CheckpointInterval, err = time.ParseDuration(or("AUDIT_CHECKPOINT_INTERVAL", "15m")); err != nil || c.CheckpointInterval <= 0 {
 		errs = append(errs, errors.New("AUDIT_CHECKPOINT_INTERVAL must be a positive duration"))
 	}
