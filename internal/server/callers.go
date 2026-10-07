@@ -20,7 +20,8 @@ const CallerGateway = "gateway"
 
 // CallerPolicy is audit's per-method allow-list. Only the gateway calls the
 // API, on behalf of the signed-in user it names in the request's requester,
-// and only on the methods it serves. ListRecentEvents has no caller (the
+// and only on the methods it serves: the three reads and the shred and
+// legal-hold methods. ListRecentEvents has no caller (the
 // gateway's live tail reads the broker), so it is refused like anything else
 // not listed. Events never come through here: they arrive over RabbitMQ.
 func CallerPolicy() workloadauth.Policy {
@@ -32,6 +33,10 @@ func CallerPolicy() workloadauth.Policy {
 		auditv1.AuditService_QueryAuditLog_FullMethodName,
 		auditv1.AuditService_ExportAuditSegment_FullMethodName,
 		auditv1.AuditService_VerifyAuditChain_FullMethodName,
+		auditv1.AuditService_ShredSubject_FullMethodName,
+		auditv1.AuditService_CreateLegalHold_FullMethodName,
+		auditv1.AuditService_ListLegalHolds_FullMethodName,
+		auditv1.AuditService_ReleaseLegalHold_FullMethodName,
 	} {
 		p[m][CallerGateway] = workloadauth.OnBehalf
 	}
