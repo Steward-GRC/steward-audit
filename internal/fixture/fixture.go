@@ -21,6 +21,12 @@ const (
 	FinanceTeam    = "finance-team"
 )
 
+// Categories, as core and workflow records carry them in the group id.
+const (
+	FacilitiesCategory = "category-facilities"
+	FinanceCategory    = "category-finance"
+)
+
 // Subjects.
 const (
 	DeskBookingPolicy   = "policy:POL-FACILITIES-000001"

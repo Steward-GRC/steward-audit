@@ -481,3 +481,54 @@ func TestRecordsOnTheWireCarryNoPersonalData(t *testing.T) {
 		}
 	}
 }
+
+func categoryManager() *auditv1.RequesterIdentity {
+	r := requester(fixture.Heidi, "", fixture.FacilitiesTeam)
+	r.ManagedCategories = []string{fixture.FacilitiesCategory}
+	return r
+}
+
+func TestQueryAuditLogGroupManagerReadsTheCategoriesItsGroupsOwn(t *testing.T) {
+	svc := NewAuditServer(&fakeQueryStore{})
+	ctx := context.Background()
+	for _, group := range []string{fixture.FacilitiesTeam, fixture.FacilitiesCategory} {
+		if _, err := svc.QueryAuditLog(ctx, &auditv1.QueryAuditLogRequest{GroupId: group, PageSize: 10, Requester: categoryManager()}); err != nil {
+			t.Fatalf("QueryAuditLog(%s): %v", group, err)
+		}
+	}
+	_, err := svc.QueryAuditLog(ctx, &auditv1.QueryAuditLogRequest{GroupId: fixture.FinanceCategory, PageSize: 10, Requester: categoryManager()})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("another category: err=%v, want PermissionDenied", err)
+	}
+}
+
+func TestListRecentEventsGroupManagerKeepsTheCategoriesItsGroupsOwn(t *testing.T) {
+	t0 := time.Now().UTC()
+	inGroup := seedRecord(t0)
+	inCategory := seedRecord(t0)
+	inCategory.GroupID = fixture.FacilitiesCategory
+	otherCategory := seedRecord(t0)
+	otherCategory.GroupID = fixture.FinanceCategory
+
+	fs := &fakeQueryStore{records: []store.Record{inGroup, inCategory, otherCategory}}
+	resp, err := NewAuditServer(fs).ListRecentEvents(context.Background(), &auditv1.ListRecentEventsRequest{
+		SinceTimestamp: timestamppb.New(t0.Add(-time.Minute)), Limit: 10, Requester: categoryManager()})
+	if err != nil {
+		t.Fatalf("ListRecentEvents: %v", err)
+	}
+	got := map[string]bool{}
+	for _, r := range resp.Records {
+		got[r.GroupId] = true
+	}
+	if len(resp.Records) != 2 || !got[fixture.FacilitiesTeam] || !got[fixture.FacilitiesCategory] {
+		t.Fatalf("tail = %+v, want the managed group and the owned category only", resp.Records)
+	}
+}
+
+func TestManagedCategoriesAloneDoNotGrantExport(t *testing.T) {
+	_, err := NewAuditServer(&fakeQueryStore{}).ExportAuditSegment(context.Background(),
+		&auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: categoryManager()})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("export err=%v, want PermissionDenied", err)
+	}
+}

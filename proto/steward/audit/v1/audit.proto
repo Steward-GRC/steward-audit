@@ -90,6 +90,10 @@ message RequesterIdentity {
   // The ids of the groups the caller manages. Without audit.read, a group
   // manager may query, verify and tail the records of these groups only.
   repeated string managed_groups = 4;
+  // The ids of the core categories the caller's managed groups own. Core and
+  // workflow records carry a category id as their group id, so without
+  // audit.read a group manager also reads the records of these categories.
+  repeated string managed_categories = 5;
 }
 
 // AuditRecord is one link of the chain. Attributes and personal data are never
