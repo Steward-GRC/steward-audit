@@ -16,18 +16,12 @@ import (
 	log "github.com/Bugs5382/go-log"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	stewardauthz "github.com/Steward-GRC/steward-authz"
+
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
 	"github.com/Steward-GRC/steward-audit/internal/auditerr"
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 	"github.com/Steward-GRC/steward-audit/internal/store"
-)
-
-// The roles the audit API knows. Auditors and compliance officers read every
-// group; a group admin reads only its own group.
-const (
-	RoleAuditor           = "auditor"
-	RoleComplianceOfficer = "compliance_officer"
-	RoleGroupAdmin        = "group_admin"
 )
 
 // QueryStore is the persistence the handlers use.
@@ -60,39 +54,47 @@ func (s *AuditServer) WithLogger(l log.Logger) *AuditServer {
 	return s
 }
 
+// caller is the requester as the audit API sees it. A role that holds the
+// catalog's audit.read reads every group; otherwise the caller reads only the
+// groups it manages.
 type caller struct {
-	userID string
-	roles  []string
-	groups []string
+	userID   string
+	readsAll bool
+	managed  []string
 }
 
 func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
 	if r.GetUserId() == "" {
 		return caller{}, auditerr.Unauthenticated()
 	}
-	return caller{userID: r.GetUserId(), roles: r.GetRoles(), groups: r.GetGroups()}, nil
-}
-
-func (r caller) has(role string) bool { return slices.Contains(r.roles, role) }
-
-func (r caller) readsEveryGroup() bool { return r.has(RoleAuditor) || r.has(RoleComplianceOfficer) }
-
-// group is the group a group admin is scoped to: its first one.
-func (r caller) group() string {
-	if len(r.groups) == 0 {
-		return ""
+	subject := stewardauthz.Subject{UserID: r.GetUserId()}
+	for _, name := range r.GetRoles() {
+		if role, err := stewardauthz.ParseRole(name); err == nil {
+			subject.Roles = append(subject.Roles, role)
+		}
 	}
-	return r.groups[0]
+	return caller{
+		userID:   r.GetUserId(),
+		readsAll: stewardauthz.HasCapability(subject, stewardauthz.AuditRead),
+		managed:  r.GetManagedGroups(),
+	}, nil
 }
 
-// QueryAuditLog returns a page of records. A group admin must name its own
-// group. Queries are not audited: reading the log would otherwise write to it.
+func (r caller) managesAGroup() bool { return len(r.managed) > 0 }
+
+func (r caller) manages(groupID string) bool {
+	return groupID != "" && slices.Contains(r.managed, groupID)
+}
+
+// QueryAuditLog returns a page of records. A caller without audit.read must
+// name a group it manages. Queries are not audited: reading the log would
+// otherwise write to it.
 func (s *AuditServer) QueryAuditLog(ctx context.Context, req *auditv1.QueryAuditLogRequest) (*auditv1.QueryAuditLogResponse, error) {
 	who, err := callerFrom(req.GetRequester())
 	if err != nil {
 		return nil, auditerr.Error(ctx, err)
 	}
-	if who.has(RoleGroupAdmin) && (req.GetGroupId() == "" || req.GetGroupId() != who.group()) {
+	if !who.readsAll && !who.manages(req.GetGroupId()) {
 		return nil, auditerr.Error(ctx, auditerr.GroupScopeDenied())
 	}
 	var cursor int64
@@ -117,15 +119,14 @@ func (s *AuditServer) QueryAuditLog(ctx context.Context, req *auditv1.QueryAudit
 }
 
 // ExportAuditSegment returns a record range and its checkpoints for offline
-// verification. Only auditors and compliance officers may export: ids are
-// global and sequential, so a range export would let a group admin read other
-// groups. Each export is itself recorded as "audit_log.exported".
+// verification. Only audit.read may export: ids are global and sequential, so
+// a range export would let a group manager read other groups. Each export is itself recorded as "audit_log.exported".
 func (s *AuditServer) ExportAuditSegment(ctx context.Context, req *auditv1.ExportAuditSegmentRequest) (*auditv1.ExportAuditSegmentResponse, error) {
 	who, err := callerFrom(req.GetRequester())
 	if err != nil {
 		return nil, auditerr.Error(ctx, err)
 	}
-	if !who.readsEveryGroup() {
+	if !who.readsAll {
 		return nil, auditerr.Error(ctx, auditerr.ExportForbidden())
 	}
 	from, to := req.GetFromRecordId(), req.GetToRecordId()
@@ -159,10 +160,15 @@ func (s *AuditServer) ExportAuditSegment(ctx context.Context, req *auditv1.Expor
 }
 
 // VerifyAuditChain verifies a record range and its checkpoints on the server.
-// Any signed-in caller may verify: the answer reveals only pass or fail.
+// audit.read and group managers may verify: the answer reveals only pass or
+// fail and counts, never a record.
 func (s *AuditServer) VerifyAuditChain(ctx context.Context, req *auditv1.VerifyAuditChainRequest) (*auditv1.VerifyAuditChainResponse, error) {
-	if _, err := callerFrom(req.GetRequester()); err != nil {
+	who, err := callerFrom(req.GetRequester())
+	if err != nil {
 		return nil, auditerr.Error(ctx, err)
+	}
+	if !who.readsAll && !who.managesAGroup() {
+		return nil, auditerr.Error(ctx, auditerr.VerifyForbidden())
 	}
 	from, to := req.GetFromRecordId(), req.GetToRecordId()
 	recs, err := s.store.RecordsInRange(ctx, from, to)
@@ -198,14 +204,15 @@ func (s *AuditServer) VerifyAuditChain(ctx context.Context, req *auditv1.VerifyA
 }
 
 // ListRecentEvents returns records since a time, for a polling tail. A group
-// admin sees its own group's records and records with no group. Tailing is
+// manager without audit.read sees the records of the groups it manages and
+// records with no group. Tailing is
 // not audited: one record per poll would drown the log.
 func (s *AuditServer) ListRecentEvents(ctx context.Context, req *auditv1.ListRecentEventsRequest) (*auditv1.ListRecentEventsResponse, error) {
 	who, err := callerFrom(req.GetRequester())
 	if err != nil {
 		return nil, auditerr.Error(ctx, err)
 	}
-	if !who.readsEveryGroup() && !who.has(RoleGroupAdmin) {
+	if !who.readsAll && !who.managesAGroup() {
 		return nil, auditerr.Error(ctx, auditerr.TailForbidden())
 	}
 	since := time.Now().Add(-time.Hour)
@@ -218,8 +225,8 @@ func (s *AuditServer) ListRecentEvents(ctx context.Context, req *auditv1.ListRec
 	if err != nil {
 		return nil, s.storeError(ctx, "list_recent", err)
 	}
-	if !who.readsEveryGroup() {
-		recs = slices.DeleteFunc(recs, func(r store.Record) bool { return r.GroupID != "" && r.GroupID != who.group() })
+	if !who.readsAll {
+		recs = slices.DeleteFunc(recs, func(r store.Record) bool { return r.GroupID != "" && !who.manages(r.GroupID) })
 	}
 	return &auditv1.ListRecentEventsResponse{Records: toProtos(recs)}, nil
 }

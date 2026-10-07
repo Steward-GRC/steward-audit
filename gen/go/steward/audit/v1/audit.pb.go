@@ -199,10 +199,18 @@ func (x *AuditEvent) GetLegalBasisExempt() bool {
 // RequesterIdentity is the caller the gateway authenticated. Every RPC needs
 // it; an empty user_id is refused as unauthenticated.
 type RequesterIdentity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Roles         []string               `protobuf:"bytes,2,rep,name=roles,proto3" json:"roles,omitempty"`
-	Groups        []string               `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	UserId string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	// The caller's global roles, as steward-authz catalog role names
+	// ("compliance-admin", "site-admin"). A role that holds audit.read reads
+	// every group; names the catalog doesn't know grant nothing.
+	Roles []string `protobuf:"bytes,2,rep,name=roles,proto3" json:"roles,omitempty"`
+	// The ids of the groups the caller is a direct member of. Not used for
+	// audit scope.
+	Groups []string `protobuf:"bytes,3,rep,name=groups,proto3" json:"groups,omitempty"`
+	// The ids of the groups the caller manages. Without audit.read, a group
+	// manager may query, verify and tail the records of these groups only.
+	ManagedGroups []string `protobuf:"bytes,4,rep,name=managed_groups,json=managedGroups,proto3" json:"managed_groups,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -254,6 +262,13 @@ func (x *RequesterIdentity) GetRoles() []string {
 func (x *RequesterIdentity) GetGroups() []string {
 	if x != nil {
 		return x.Groups
+	}
+	return nil
+}
+
+func (x *RequesterIdentity) GetManagedGroups() []string {
+	if x != nil {
+		return x.ManagedGroups
 	}
 	return nil
 }
@@ -1019,11 +1034,12 @@ const file_steward_audit_v1_audit_proto_rawDesc = "" +
 	"\x12legal_basis_exempt\x18\b \x01(\bR\x10legalBasisExempt\x1a=\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Z\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x81\x01\n" +
 	"\x11RequesterIdentity\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x14\n" +
 	"\x05roles\x18\x02 \x03(\tR\x05roles\x12\x16\n" +
-	"\x06groups\x18\x03 \x03(\tR\x06groups\"\xec\x02\n" +
+	"\x06groups\x18\x03 \x03(\tR\x06groups\x12%\n" +
+	"\x0emanaged_groups\x18\x04 \x03(\tR\rmanagedGroups\"\xec\x02\n" +
 	"\vAuditRecord\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1f\n" +
 	"\vrecord_uuid\x18\x02 \x01(\tR\n" +
