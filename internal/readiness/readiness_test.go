@@ -83,6 +83,8 @@ func TestRabbitMQDownMakesAuditNotReady(t *testing.T) {
 	b.down.Store(true)
 	require.Eventually(t, func() bool { return !c.Report(context.Background()).Ready }, 2*time.Second, 5*time.Millisecond)
 	require.Equal(t, health.StateDown, dep(t, c.Report(context.Background()), readiness.RabbitMQ).State)
+	b.down.Store(false)
+	require.Eventually(t, func() bool { return c.Report(context.Background()).Ready }, 2*time.Second, 5*time.Millisecond)
 }
 
 func TestJWKSDownMakesAuditNotReady(t *testing.T) {
