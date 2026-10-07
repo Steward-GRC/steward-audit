@@ -13,9 +13,11 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/Bugs5382/go-buildinfo/health"
 	log "github.com/Bugs5382/go-log"
 	gootel "github.com/Bugs5382/go-otel"
 	postgres "github.com/Bugs5382/go-postgres"
@@ -29,11 +31,17 @@ import (
 	"github.com/Steward-GRC/steward-audit/internal/checkpoint"
 	"github.com/Steward-GRC/steward-audit/internal/config"
 	"github.com/Steward-GRC/steward-audit/internal/ingest"
+	"github.com/Steward-GRC/steward-audit/internal/readiness"
 	"github.com/Steward-GRC/steward-audit/internal/server"
 	"github.com/Steward-GRC/steward-audit/internal/store"
+	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 const serviceName = "audit"
+
+// jwksRecheck is how long a good JWKS fetch keeps readiness up before the
+// next probe fetches the key set again.
+const jwksRecheck = time.Minute
 
 // Set with -ldflags -X at build time.
 var (
@@ -107,14 +115,57 @@ func run(ctx context.Context, logger log.Logger) error {
 		}
 	}()
 
+	deps := readiness.Deps{Postgres: readiness.PostgresDB(db), Broker: conn}
+	var auth *server.Auth
+	if cfg.WorkloadAuthEnabled {
+		v, err := workloadauth.NewVerifier(cfg.WorkloadAuth, logger)
+		if err != nil {
+			return fmt.Errorf("workload auth: %w", err)
+		}
+		go v.Run(ctx)
+		deps.JWKS = readiness.RecheckEvery(v.Refresh, jwksRecheck, time.Now)
+		auth = &server.Auth{Verifier: v, Policy: server.CallerPolicy(), Options: []workloadauth.Option{
+			workloadauth.WithDenyHook(server.AuditDenial(records, logger)),
+		}}
+		logger.Info("service-to-service authentication on",
+			log.F("issuer", cfg.WorkloadAuth.Issuer), log.F("audience", cfg.WorkloadAuth.Audience),
+			log.F("jwks_override", cfg.WorkloadAuth.JWKSURL != ""), log.F("ca_file", cfg.WorkloadAuth.CAFile != ""),
+			log.F("bearer_file", cfg.WorkloadAuth.BearerFile != ""),
+			log.F("allowed_serviceaccounts", strings.Join(cfg.WorkloadAuth.AllowedServiceAccounts, ",")))
+	} else {
+		deps.WorkloadAuthDisabled = true
+		go workloadauth.WarnDisabled(ctx, logger, workloadauth.DisabledWarnInterval)
+	}
+	checker, err := readiness.New(deps, health.WithTTL(5*time.Second), health.WithTimeout(2*time.Second), health.WithLogger(logger))
+	if err != nil {
+		return fmt.Errorf("readiness: %w", err)
+	}
+
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", ":"+cfg.GRPCPort)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
+	probeLis, err := lc.Listen(ctx, "tcp", ":"+cfg.ProbePort)
+	if err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
 	api := server.NewAuditServer(auditStore{records, checkpoints}).WithLogger(logger)
-	logger.Info("serving", log.F("port", cfg.GRPCPort))
-	return server.Serve(ctx, lis, logger, func(s *grpc.Server) { auditv1.RegisterAuditServiceServer(s, api) })
+	logger.Info("serving", log.F("port", cfg.GRPCPort), log.F("probe_port", cfg.ProbePort))
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	probesDone := make(chan error, 1)
+	go func() {
+		probesDone <- server.ServeProbes(ctx, probeLis, checker)
+		cancel()
+	}()
+	err = server.Serve(ctx, lis, logger, server.Options{Auth: auth, Checker: checker},
+		func(s *grpc.Server) { auditv1.RegisterAuditServiceServer(s, api) })
+	cancel()
+	if perr := <-probesDone; err == nil {
+		err = perr
+	}
+	return err
 }
 
 type hashReader struct {

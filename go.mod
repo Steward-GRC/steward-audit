@@ -6,11 +6,14 @@ toolchain go1.26.6
 
 require (
 	github.com/Bugs5382/go-apperr v1.2.1
+	github.com/Bugs5382/go-buildinfo v1.0.0
 	github.com/Bugs5382/go-log v1.3.0
 	github.com/Bugs5382/go-otel v1.3.2
 	github.com/Bugs5382/go-postgres v1.2.2
 	github.com/Bugs5382/go-rabbitmq v1.3.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	google.golang.org/grpc v1.84.0
@@ -68,7 +71,6 @@ require (
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.3 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect

@@ -17,5 +17,5 @@ COPY --from=build /out/server /server
 COPY --from=build /src/migrations /migrations
 ENV MIGRATIONS_DIR=/migrations
 USER nonroot:nonroot
-EXPOSE 9090
+EXPOSE 9090 8080
 ENTRYPOINT ["/server"]

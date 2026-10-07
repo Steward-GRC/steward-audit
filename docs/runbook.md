@@ -7,7 +7,11 @@ The service applies the migrations, connects to Postgres, starts the checkpointe
 with every problem listed. It stops cleanly on SIGINT or SIGTERM, draining in-flight calls for up to
 ten seconds.
 
-Health: `grpc.health.v1.Health/Check` on `GRPC_PORT`.
+Health: `grpc.health.v1.Health/Check` on `GRPC_PORT` (the empty name and `readiness` follow the
+dependencies; `liveness` is the process only), and `/readyz` and `/livez` on `PROBE_PORT`.
+Readiness needs Postgres, RabbitMQ and, while caller authentication is on, the issuer's key set
+(`jwks`). With `WORKLOAD_AUTH=disabled` audit reports itself degraded and logs a warning every
+five minutes.
 
 ## Logs worth knowing
 
@@ -18,6 +22,10 @@ Health: `grpc.health.v1.Health/Check` on `GRPC_PORT`.
 | `rabbitmq: handler dead-lettered a message` | An event couldn't be stored | Read it from the dead-letter queue; fix the publisher. |
 | `audit store read failed` | An API read failed (`op` says which) | Check Postgres. The caller got `AUDIT_STORE_UNAVAILABLE` (2001). |
 | `audit chain verification failed` | A verify found a problem | Treat as a possible tamper: export the range and verify it offline, and compare with backups. |
+| `Unavailable: workload verifier unavailable`, `/readyz` 503 with `jwks` down | No issuer key set has loaded | Check `WORKLOAD_OIDC_ISSUER`, the CA file and the bearer file: an API server answers 401 to a bearer with the `steward` audience, so the bearer must be the second projected token. |
+| `Unauthenticated: no workload token` / `workload token rejected` | The caller sent no token, or one with the wrong audience, issuer or expiry, or from a service account outside `WORKLOAD_ALLOWED_SERVICEACCOUNTS` | Check the caller's `WORKLOAD_TOKEN_FILE` mount and audit's allow-list. |
+| `PermissionDenied: caller not allowed on this method` | A verified caller isn't listed for the method | Expected for anything but the gateway; the refusal is in the chain as `rpc.denied`. |
+| `recording a refused call failed` | A refusal couldn't be appended to the chain | Check Postgres. |
 | `export meta-audit record failed` | An export happened but wasn't recorded | Check Postgres; record the export by hand from the log line. |
 
 ## Verifying the chain

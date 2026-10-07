@@ -42,7 +42,9 @@ dead-letter exchange, which the broker policy sets, instead of looping.
 ## gRPC
 
 `steward.audit.v1.AuditService`, in `proto/steward/audit/v1/audit.proto`. The server also serves
-`grpc.health.v1` and reflection.
+`grpc.health.v1` and reflection, which need no token. Every other call must carry the caller's
+workload token; only the gateway is allowed, on the methods listed in
+[configuration](configuration.md#service-to-service-authentication).
 
 Every request carries a `RequesterIdentity` (user id, roles, groups) that the gateway fills from the
 session it authenticated; an empty user id is refused with `AUDIT_UNAUTHENTICATED`.
