@@ -46,21 +46,24 @@ dead-letter exchange, which the broker policy sets, instead of looping.
 workload token; only the gateway is allowed, on the methods listed in
 [configuration](configuration.md#service-to-service-authentication).
 
-Every request carries a `RequesterIdentity` (user id, roles, groups, managed groups) that the
-gateway fills from the session it authenticated; an empty user id is refused with
-`AUDIT_UNAUTHENTICATED`.
+Every request carries a `RequesterIdentity` (user id, roles, groups, managed groups, managed
+categories) that the gateway fills from the session it authenticated; an empty user id is refused
+with `AUDIT_UNAUTHENTICATED`.
 
 Access follows the steward-authz permission catalog. `roles` are catalog role names: a role that
 holds `audit.read` (`compliance-admin` and `site-admin` today) reads every group. A caller without
-it reads only the groups listed in `managed_groups` (the groups it manages). Role names the catalog
-doesn't know grant nothing, and `groups` (direct membership) never widens audit scope.
+it reads only the groups listed in `managed_groups` (the groups it manages) and the categories
+listed in `managed_categories` (the core categories those groups own; core and workflow records
+carry a category id as their group id). A record is in scope when its group id matches either list.
+Role names the catalog doesn't know grant nothing, and `groups` (direct membership) never widens
+audit scope.
 
 | RPC | Who may call | What it does |
 | --- | --- | --- |
-| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages, named in `group_id` | A page of records, filtered by tier, group, actor and subject. `next_page_token` is set when the page is full. Not audited. |
+| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages or a category those groups own, named in `group_id` | A page of records, filtered by tier, group, actor and subject. `next_page_token` is set when the page is full. Not audited. |
 | `ExportAuditSegment` | `audit.read` | A record id range and the checkpoints wholly inside it, for offline verification. Each export is recorded as `audit_log.exported`. |
 | `VerifyAuditChain` | `audit.read`, or a group manager | Re-walks a record id range and its checkpoints on the server and returns pass or fail with the problems found. |
-| `ListRecentEvents` | `audit.read`; a group manager sees the groups it manages and records with no group | Records that occurred at or after `since_timestamp` (an hour ago when unset), for a polling tail. Not audited. |
+| `ListRecentEvents` | `audit.read`; a group manager sees the groups it manages, the categories they own and records with no group | Records that occurred at or after `since_timestamp` (an hour ago when unset), for a polling tail. Not audited. |
 
 Anyone else is refused with `AUDIT_GROUP_SCOPE_DENIED`, `AUDIT_EXPORT_FORBIDDEN`,
 `AUDIT_VERIFY_FORBIDDEN` or `AUDIT_TAIL_FORBIDDEN`.

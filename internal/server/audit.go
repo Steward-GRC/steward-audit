@@ -58,13 +58,14 @@ func (s *AuditServer) WithLogger(l log.Logger) *AuditServer {
 
 // caller is the requester as the audit API sees it. A role that holds the
 // catalog's audit.read reads every group; otherwise the caller reads only the
-// groups it manages.
+// groups it manages and the categories those groups own.
 type caller struct {
 	userID string
 	// readsAll holds audit.read; managesRetention holds compliance.manage.
 	readsAll         bool
 	managesRetention bool
 	managed          []string
+	categories       []string
 }
 
 func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
@@ -82,13 +83,16 @@ func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
 		readsAll:         stewardauthz.HasCapability(subject, stewardauthz.AuditRead),
 		managesRetention: stewardauthz.HasCapability(subject, stewardauthz.ComplianceManage),
 		managed:          r.GetManagedGroups(),
+		categories:       r.GetManagedCategories(),
 	}, nil
 }
 
-func (r caller) managesAGroup() bool { return len(r.managed) > 0 }
+func (r caller) managesAGroup() bool { return len(r.managed) > 0 || len(r.categories) > 0 }
 
+// manages reports whether a record's group id is in the caller's scope: a
+// platform group it manages, or a category one of those groups owns.
 func (r caller) manages(groupID string) bool {
-	return groupID != "" && slices.Contains(r.managed, groupID)
+	return groupID != "" && (slices.Contains(r.managed, groupID) || slices.Contains(r.categories, groupID))
 }
 
 // QueryAuditLog returns a page of records. A caller without audit.read must
