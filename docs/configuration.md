@@ -37,8 +37,8 @@ allow-list in code (`internal/server/callers.go`):
 | Method | Callers |
 | --- | --- |
 | `QueryAuditLog`, `ExportAuditSegment`, `VerifyAuditChain` | gateway, on behalf of the signed-in user it names in `requester` |
+| `ShredSubject`, `CreateLegalHold`, `ListLegalHolds`, `ReleaseLegalHold` | gateway, on behalf of the signed-in user it names in `requester` (who still needs `compliance.manage`) |
 | `ListRecentEvents` | none (the gateway's live tail reads the broker) |
-| `ShredSubject`, `CreateLegalHold`, `ListLegalHolds`, `ReleaseLegalHold` | none yet: added for the gateway once it serves them |
 
 A missing or rejected token is `Unauthenticated`; a verified caller not listed for the method is
 `PermissionDenied`. Each refusal is logged and appended to the chain as an `rpc.denied` record in

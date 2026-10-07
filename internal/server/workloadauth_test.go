@@ -305,14 +305,18 @@ func TestWorkloadAuthFailsClosedWhileTheJWKSIsRefused(t *testing.T) {
 }
 
 // The policy is the whole allow-list: the gateway, on behalf of the signed-in
-// user it names in the requester, on the three methods it calls; nobody on
-// anything else.
+// user it names in the requester, on the three reads and the four retention
+// methods it calls; nobody on anything else.
 func TestCallerPolicyListsOnlyTheGatewaysMethods(t *testing.T) {
 	p := CallerPolicy()
 	want := map[string]map[string]workloadauth.Access{
 		auditv1.AuditService_QueryAuditLog_FullMethodName:      {CallerGateway: workloadauth.OnBehalf},
 		auditv1.AuditService_ExportAuditSegment_FullMethodName: {CallerGateway: workloadauth.OnBehalf},
 		auditv1.AuditService_VerifyAuditChain_FullMethodName:   {CallerGateway: workloadauth.OnBehalf},
+		auditv1.AuditService_ShredSubject_FullMethodName:       {CallerGateway: workloadauth.OnBehalf},
+		auditv1.AuditService_CreateLegalHold_FullMethodName:    {CallerGateway: workloadauth.OnBehalf},
+		auditv1.AuditService_ListLegalHolds_FullMethodName:     {CallerGateway: workloadauth.OnBehalf},
+		auditv1.AuditService_ReleaseLegalHold_FullMethodName:   {CallerGateway: workloadauth.OnBehalf},
 	}
 	got := map[string]map[string]workloadauth.Access{}
 	for m, callers := range p {
