@@ -16,26 +16,29 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	stewardauthz "github.com/Steward-GRC/steward-authz"
+
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 	"github.com/Steward-GRC/steward-audit/internal/fixture"
 	"github.com/Steward-GRC/steward-audit/internal/store"
 )
 
-func requester(userID, role, groupID string) *auditv1.RequesterIdentity {
+func requester(userID, role, managedGroup string) *auditv1.RequesterIdentity {
 	r := &auditv1.RequesterIdentity{UserId: userID}
 	if role != "" {
 		r.Roles = []string{role}
 	}
-	if groupID != "" {
-		r.Groups = []string{groupID}
+	if managedGroup != "" {
+		r.ManagedGroups = []string{managedGroup}
 	}
 	return r
 }
 
 var (
-	auditor    = requester(fixture.Grace, RoleAuditor, "")
-	groupAdmin = requester(fixture.Heidi, RoleGroupAdmin, fixture.FacilitiesTeam)
+	auditor      = requester(fixture.Grace, string(stewardauthz.RoleComplianceAdmin), "")
+	groupManager = requester(fixture.Heidi, "", fixture.FacilitiesTeam)
+	plainReader  = requester(fixture.Erin, "", "")
 )
 
 type fakeQueryStore struct {
@@ -137,26 +140,85 @@ func TestQueryAuditLogAuditorFullAccess(t *testing.T) {
 	}
 }
 
-func TestQueryAuditLogComplianceOfficerFullAccess(t *testing.T) {
+func TestQueryAuditLogSiteAdminFullAccess(t *testing.T) {
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
 	if _, err := NewAuditServer(fs).QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{
-		Requester: requester(fixture.Grace, RoleComplianceOfficer, "")}); err != nil {
+		Requester: requester(fixture.Grace, string(stewardauthz.RoleSiteAdmin), "")}); err != nil {
 		t.Fatalf("QueryAuditLog: %v", err)
+	}
+}
+
+// Every catalog role without audit.read, and the original role names the
+// catalog doesn't know, is refused on all four reads.
+func TestRolesWithoutAuditReadAreRefused(t *testing.T) {
+	refused := []string{"", "author", "approver", "template-admin", "auditor", "compliance_officer", "group_admin"}
+	for _, role := range refused {
+		t.Run("role="+role, func(t *testing.T) {
+			who := requester(fixture.Erin, role, "")
+			svc := NewAuditServer(&fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}})
+			ctx := context.Background()
+			_, err := svc.QueryAuditLog(ctx, &auditv1.QueryAuditLogRequest{GroupId: fixture.FacilitiesTeam, Requester: who})
+			if symbolOf(err) != "AUDIT_GROUP_SCOPE_DENIED" {
+				t.Errorf("query: %v", err)
+			}
+			_, err = svc.ExportAuditSegment(ctx, &auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: who})
+			if symbolOf(err) != "AUDIT_EXPORT_FORBIDDEN" {
+				t.Errorf("export: %v", err)
+			}
+			_, err = svc.VerifyAuditChain(ctx, &auditv1.VerifyAuditChainRequest{FromRecordId: 1, ToRecordId: 1, Requester: who})
+			if status.Code(err) != codes.PermissionDenied || symbolOf(err) != "AUDIT_VERIFY_FORBIDDEN" {
+				t.Errorf("verify: %v", err)
+			}
+			_, err = svc.ListRecentEvents(ctx, &auditv1.ListRecentEventsRequest{Requester: who})
+			if symbolOf(err) != "AUDIT_TAIL_FORBIDDEN" {
+				t.Errorf("tail: %v", err)
+			}
+		})
+	}
+}
+
+func TestRolesWithAuditReadReadEveryGroup(t *testing.T) {
+	for _, role := range []stewardauthz.Role{stewardauthz.RoleComplianceAdmin, stewardauthz.RoleSiteAdmin} {
+		if !stewardauthz.HasCapability(stewardauthz.Subject{Roles: []stewardauthz.Role{role}}, stewardauthz.AuditRead) {
+			t.Fatalf("catalog: %s should hold audit.read", role)
+		}
+		who := requester(fixture.Grace, string(role), "")
+		svc := NewAuditServer(&fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}})
+		ctx := context.Background()
+		if _, err := svc.QueryAuditLog(ctx, &auditv1.QueryAuditLogRequest{GroupId: fixture.FinanceTeam, Requester: who}); err != nil {
+			t.Errorf("%s query: %v", role, err)
+		}
+		if _, err := svc.ExportAuditSegment(ctx, &auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: who}); err != nil {
+			t.Errorf("%s export: %v", role, err)
+		}
+		if _, err := svc.VerifyAuditChain(ctx, &auditv1.VerifyAuditChainRequest{FromRecordId: 1, ToRecordId: 1, Requester: who}); err != nil {
+			t.Errorf("%s verify: %v", role, err)
+		}
+		if _, err := svc.ListRecentEvents(ctx, &auditv1.ListRecentEventsRequest{Requester: who}); err != nil {
+			t.Errorf("%s tail: %v", role, err)
+		}
+	}
+}
+
+func TestVerifyAuditChainGroupManagerAllowed(t *testing.T) {
+	svc := NewAuditServer(&fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}})
+	if _, err := svc.VerifyAuditChain(context.Background(), &auditv1.VerifyAuditChainRequest{FromRecordId: 1, ToRecordId: 1, Requester: groupManager}); err != nil {
+		t.Fatalf("group manager verify: %v", err)
 	}
 }
 
 func TestQueryAuditLogGroupAdminScopedToGroup(t *testing.T) {
 	svc := NewAuditServer(&fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}})
-	if _, err := svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{GroupId: fixture.FacilitiesTeam, PageSize: 10, Requester: groupAdmin}); err != nil {
+	if _, err := svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{GroupId: fixture.FacilitiesTeam, PageSize: 10, Requester: groupManager}); err != nil {
 		t.Fatalf("group admin query: %v", err)
 	}
-	_, err := svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{GroupId: fixture.FinanceTeam, PageSize: 10, Requester: groupAdmin})
+	_, err := svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{GroupId: fixture.FinanceTeam, PageSize: 10, Requester: groupManager})
 	if status.Code(err) != codes.PermissionDenied || symbolOf(err) != "AUDIT_GROUP_SCOPE_DENIED" {
 		t.Fatalf("expected AUDIT_GROUP_SCOPE_DENIED, got %v", err)
 	}
-	_, err = svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{PageSize: 10, Requester: groupAdmin})
+	_, err = svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{PageSize: 10, Requester: groupManager})
 	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("expected PermissionDenied for platform-wide group_admin query, got %v", err)
+		t.Fatalf("expected PermissionDenied for platform-wide group manager query, got %v", err)
 	}
 }
 
@@ -249,9 +311,9 @@ func TestExportAuditSegmentAuditorAllowed(t *testing.T) {
 
 func TestExportAuditSegmentGroupAdminDenied(t *testing.T) {
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
-	_, err := NewAuditServer(fs).ExportAuditSegment(context.Background(), &auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: groupAdmin})
+	_, err := NewAuditServer(fs).ExportAuditSegment(context.Background(), &auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: groupManager})
 	if status.Code(err) != codes.PermissionDenied || symbolOf(err) != "AUDIT_EXPORT_FORBIDDEN" {
-		t.Fatalf("expected AUDIT_EXPORT_FORBIDDEN for group_admin, got %v", err)
+		t.Fatalf("expected AUDIT_EXPORT_FORBIDDEN for a group manager, got %v", err)
 	}
 	if len(fs.appended) != 0 {
 		t.Fatal("a refused export is not an export")
@@ -373,16 +435,16 @@ func TestListRecentEventsGroupAdminFiltersToOwnGroup(t *testing.T) {
 
 	fs := &fakeQueryStore{records: []store.Record{inGroup, outGroup, systemEvent}}
 	resp, err := NewAuditServer(fs).ListRecentEvents(context.Background(), &auditv1.ListRecentEventsRequest{
-		SinceTimestamp: timestamppb.New(t0.Add(-time.Minute)), Limit: 10, Requester: groupAdmin})
+		SinceTimestamp: timestamppb.New(t0.Add(-time.Minute)), Limit: 10, Requester: groupManager})
 	if err != nil {
 		t.Fatalf("ListRecentEvents: %v", err)
 	}
 	if len(resp.Records) != 2 {
-		t.Fatalf("group_admin filter wrong: got %d records, expected 2", len(resp.Records))
+		t.Fatalf("group manager filter wrong: got %d records, expected 2", len(resp.Records))
 	}
 	for _, r := range resp.Records {
 		if r.GroupId == fixture.FinanceTeam {
-			t.Errorf("another group's record leaked into the group_admin tail: %+v", r)
+			t.Errorf("another group's record leaked into the group manager tail: %+v", r)
 		}
 	}
 }
@@ -390,7 +452,7 @@ func TestListRecentEventsGroupAdminFiltersToOwnGroup(t *testing.T) {
 func TestListRecentEventsRejectsCallersWithoutAuditRole(t *testing.T) {
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
 	_, err := NewAuditServer(fs).ListRecentEvents(context.Background(), &auditv1.ListRecentEventsRequest{
-		Limit: 10, Requester: requester(fixture.Erin, "reader", "")})
+		Limit: 10, Requester: plainReader})
 	if status.Code(err) != codes.PermissionDenied || symbolOf(err) != "AUDIT_TAIL_FORBIDDEN" {
 		t.Fatalf("expected AUDIT_TAIL_FORBIDDEN, got %v", err)
 	}

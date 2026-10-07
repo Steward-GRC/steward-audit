@@ -67,8 +67,16 @@ message AuditEvent {
 // it; an empty user_id is refused as unauthenticated.
 message RequesterIdentity {
   string user_id = 1;
+  // The caller's global roles, as steward-authz catalog role names
+  // ("compliance-admin", "site-admin"). A role that holds audit.read reads
+  // every group; names the catalog doesn't know grant nothing.
   repeated string roles = 2;
+  // The ids of the groups the caller is a direct member of. Not used for
+  // audit scope.
   repeated string groups = 3;
+  // The ids of the groups the caller manages. Without audit.read, a group
+  // manager may query, verify and tail the records of these groups only.
+  repeated string managed_groups = 4;
 }
 
 // AuditRecord is one link of the chain. Attributes and personal data are never

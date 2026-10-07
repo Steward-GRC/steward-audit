@@ -27,6 +27,7 @@ const (
 	CodeUnauthenticated  = 2004
 	CodeInvalidPageToken = 2005
 	CodeTailForbidden    = 2006
+	CodeVerifyForbidden  = 2007
 )
 
 // Entries returns the registry entries.
@@ -37,11 +38,11 @@ func Entries() []apperr.Entry {
 		{Code: CodeStoreUnavailable, Symbol: "AUDIT_STORE_UNAVAILABLE", Category: apperr.CategoryInternal,
 			Title: "audit store", Cause: "an audit store read failed; the op metadata names it, the cause is only logged"},
 		{Code: CodeExportForbidden, Symbol: "AUDIT_EXPORT_FORBIDDEN", Category: apperr.CategoryPermissionDenied,
-			Title: "audit export", Cause: "a caller without the auditor or compliance_officer role asked for a raw segment",
-			UserSafe: true, Message: "You don't have permission to export raw audit segments. Use the audit log query, which is scoped to your group."},
+			Title: "audit export", Cause: "a caller without audit.read asked for a raw segment",
+			UserSafe: true, Message: "You don't have permission to export raw audit segments. Use the audit log query, which is scoped to the groups you manage."},
 		{Code: CodeGroupScopeDenied, Symbol: "AUDIT_GROUP_SCOPE_DENIED", Category: apperr.CategoryPermissionDenied,
-			Title: "audit query", Cause: "a group_admin asked for another group or for every group",
-			UserSafe: true, Message: "You can only view audit records for your own group."},
+			Title: "audit query", Cause: "a caller without audit.read asked for a group it doesn't manage, or for every group",
+			UserSafe: true, Message: "You can only view audit records for the groups you manage."},
 		{Code: CodeUnauthenticated, Symbol: "AUDIT_UNAUTHENTICATED", Category: apperr.CategoryUnauthenticated,
 			Title: "audit", Cause: "the request carried no requester, or one with an empty user id",
 			UserSafe: true, Message: "Sign in to view the audit log."},
@@ -49,8 +50,11 @@ func Entries() []apperr.Entry {
 			Title: "audit query", Cause: "the page token is not one this service issued",
 			UserSafe: true, Message: "That page of the audit log is no longer valid. Start the search again."},
 		{Code: CodeTailForbidden, Symbol: "AUDIT_TAIL_FORBIDDEN", Category: apperr.CategoryPermissionDenied,
-			Title: "audit tail", Cause: "the caller has no role that may follow recent audit events",
+			Title: "audit tail", Cause: "the caller has neither audit.read nor a group it manages",
 			UserSafe: true, Message: "You don't have permission to follow recent audit events."},
+		{Code: CodeVerifyForbidden, Symbol: "AUDIT_VERIFY_FORBIDDEN", Category: apperr.CategoryPermissionDenied,
+			Title: "audit verify", Cause: "the caller has neither audit.read nor a group it manages",
+			UserSafe: true, Message: "You don't have permission to verify the audit log."},
 	}
 }
 
@@ -96,12 +100,13 @@ var (
 	errUnauthenticated  = errors.New("audit: no requester")
 	errInvalidPageToken = errors.New("audit: invalid page token")
 	errTailForbidden    = errors.New("audit: tail forbidden")
+	errVerifyForbidden  = errors.New("audit: verify forbidden")
 )
 
 // ExportForbidden codes a refused export.
 func ExportForbidden() error { return apperr.Coded(CodeExportForbidden, errExportForbidden) }
 
-// GroupScopeDenied codes a group_admin query outside its group.
+// GroupScopeDenied codes a query outside the groups the caller manages.
 func GroupScopeDenied() error { return apperr.Coded(CodeGroupScopeDenied, errGroupScope) }
 
 // Unauthenticated codes a request without a requester.
@@ -112,6 +117,9 @@ func InvalidPageToken() error { return apperr.Coded(CodeInvalidPageToken, errInv
 
 // TailForbidden codes a refused tail.
 func TailForbidden() error { return apperr.Coded(CodeTailForbidden, errTailForbidden) }
+
+// VerifyForbidden codes a refused verify.
+func VerifyForbidden() error { return apperr.Coded(CodeVerifyForbidden, errVerifyForbidden) }
 
 type logSink struct{ l log.Logger }
 
