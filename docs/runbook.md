@@ -7,11 +7,50 @@ The service applies the migrations, connects to Postgres, starts the checkpointe
 with every problem listed. It stops cleanly on SIGINT or SIGTERM, draining in-flight calls for up to
 ten seconds.
 
-Health: `grpc.health.v1.Health/Check` on `GRPC_PORT` (the empty name and `readiness` follow the
-dependencies; `liveness` is the process only), and `/readyz` and `/livez` on `PROBE_PORT`.
-Readiness needs Postgres, RabbitMQ and, while caller authentication is on, the issuer's key set
-(`jwks`). With `WORKLOAD_AUTH=disabled` audit reports itself degraded and logs a warning every
-five minutes.
+## Probes
+
+Readiness follows go-buildinfo's dependency checker. Each check has a 2-second timeout, and a result
+is reused for 5 seconds.
+
+| Dependency | Required | When it's down |
+| --- | --- | --- |
+| `postgres` | yes | Not ready: events can't be stored and nothing can be read. |
+| `rabbitmq` | yes | Not ready: the consumer can't take events. |
+| `jwks` | yes, while service-to-service authentication is on | Not ready: no caller can be verified. A good fetch keeps it up for a minute; a failure is retried on the next probe. |
+| `workloadauth` | no, reported only with `WORKLOAD_AUTH=disabled` | Always degraded, with a warning logged every five minutes. Never run like this outside local development. |
+
+- **HTTP on `PROBE_PORT` (8080):** `GET /livez` is 200 while the process is up and never checks a
+  dependency. `GET /readyz` is 200 while ready and 503 while a required dependency is down; its JSON
+  body lists every dependency with its state, whether it's required, the error class, the check
+  time and the version.
+- **gRPC on `GRPC_PORT`:** `grpc.health.v1` with the service name `liveness` reports the process
+  only. The empty name and `readiness` follow readiness. Every `Health/Check` answer, and no other
+  call, carries these response headers:
+  - `steward-version`: the image tag, `dev` for an unstamped build;
+  - `steward-commit`: the source commit, falling back to the binary's `vcs.revision`, then `unknown`;
+  - `steward-dep-postgres`: the server version from `SHOW server_version`;
+  - `steward-depstate-<name>`: `ok`, `degraded` or `down`.
+
+  There's no `steward-dep-rabbitmq` yet: the RabbitMQ client library doesn't expose the broker's
+  version from the handshake.
+- Point liveness at `/livez` (or the `liveness` service), never at a dependency: a database outage
+  would restart every replica. Point readiness at `/readyz` (or the `readiness` service).
+- Readiness recovers on its own once the dependency is back.
+
+## Build stamp
+
+The Dockerfile takes two build arguments and stamps them into go-buildinfo:
+
+| Argument | Value |
+| --- | --- |
+| `VERSION` | The image tag. Default `dev`. |
+| `COMMIT` | The full source SHA. Empty reports `unknown`, since the build context has no `.git`. |
+
+```sh
+docker build --build-arg VERSION=v0.1.0 --build-arg COMMIT="$(git rev-parse HEAD)" .
+```
+
+The start-up log line `starting` carries the same version and commit.
 
 ## Logs worth knowing
 

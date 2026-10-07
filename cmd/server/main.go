@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	buildinfo "github.com/Bugs5382/go-buildinfo"
 	"github.com/Bugs5382/go-buildinfo/health"
 	log "github.com/Bugs5382/go-log"
 	gootel "github.com/Bugs5382/go-otel"
@@ -43,13 +44,6 @@ const serviceName = "audit"
 // next probe fetches the key set again.
 const jwksRecheck = time.Minute
 
-// Set with -ldflags -X at build time.
-var (
-	version   = "dev"
-	commit    = "none"
-	buildDate = "unknown"
-)
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -60,7 +54,8 @@ func main() {
 }
 
 func run(ctx context.Context, logger log.Logger) error {
-	logger.Info("starting", log.F("version", version), log.F("commit", commit), log.F("build_date", buildDate))
+	bi := buildinfo.Get()
+	logger.Info("starting", log.F("version", bi.Version), log.F("commit", bi.Commit), log.F("go_version", bi.GoVersion))
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
