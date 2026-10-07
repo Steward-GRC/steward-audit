@@ -144,3 +144,61 @@ func TestVerifyChainFromSeedsTheBoundary(t *testing.T) {
 		t.Fatal("a sub-range seeded with the genesis must fail at its first link")
 	}
 }
+
+// purgedChain is three activity records and a checkpoint over them, with the
+// middle one purged afterwards: its content is cleared, its link and hash kept.
+func purgedChain(t *testing.T) ([]VerifyRecord, VerifyCheckpoint) {
+	t.Helper()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var recs []VerifyRecord
+	prev := ""
+	for i := range 3 {
+		r := VerifyRecord{ID: int64(i + 1), PrevHash: prev, Tier: "activity", Action: fixture.PolicyViewed,
+			ActorUserID: fixture.Erin, Subject: fixture.DeskBookingPolicy, GroupID: fixture.FacilitiesTeam,
+			OccurredAt: t0.Add(time.Duration(i) * time.Minute)}
+		r.RecordHash = hashOf(r)
+		prev = r.RecordHash
+		recs = append(recs, r)
+	}
+	root, _ := merkle.BuildTree([]string{recs[0].RecordHash, recs[1].RecordHash, recs[2].RecordHash})
+	recs[1].Action, recs[1].ActorUserID, recs[1].Subject, recs[1].GroupID, recs[1].Attributes = "", "", "", "", nil
+	recs[1].Purged = true
+	return recs, VerifyCheckpoint{CheckpointUUID: "cp-1", FromRecordID: 1, ToRecordID: 3, MerkleRoot: root}
+}
+
+func TestVerifyChainPassesOverAPurgedRecord(t *testing.T) {
+	recs, cp := purgedChain(t)
+	report := VerifyChain(recs, []VerifyCheckpoint{cp})
+	if !report.Valid {
+		t.Fatalf("a purged record keeps its link and hash, so the chain verifies: %v", report.Errors)
+	}
+	if report.RecordsPurged != 1 || report.RecordsChecked != 3 || report.CheckpointsChecked != 1 {
+		t.Fatalf("report %+v", report)
+	}
+}
+
+func TestVerifyChainStillChecksAPurgedRecordsLink(t *testing.T) {
+	recs, cp := purgedChain(t)
+	recs[1].PrevHash = "forged"
+	if VerifyChain(recs, []VerifyCheckpoint{cp}).Valid {
+		t.Fatal("a purged record with a broken link must fail")
+	}
+}
+
+func TestVerifyChainRefusesAPurgedAuditTierRecord(t *testing.T) {
+	recs, cp := purgedChain(t)
+	recs[1].Tier = "audit"
+	if VerifyChain(recs, []VerifyCheckpoint{cp}).Valid {
+		t.Fatal("audit-tier records are never purged, so a purged one is tampering")
+	}
+}
+
+func TestVerifyChainRefusesAPurgedRecordWhoseHashChanged(t *testing.T) {
+	recs, cp := purgedChain(t)
+	recs[1].RecordHash = "replaced"
+	recs[2].PrevHash = "replaced"
+	recs[2].RecordHash = hashOf(recs[2])
+	if VerifyChain(recs, []VerifyCheckpoint{cp}).Valid {
+		t.Fatal("the checkpoint root still covers the original hash")
+	}
+}

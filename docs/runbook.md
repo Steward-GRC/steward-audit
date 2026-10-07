@@ -66,6 +66,11 @@ The start-up log line `starting` carries the same version and commit.
 | `PermissionDenied: caller not allowed on this method` | A verified caller isn't listed for the method | Expected for anything but the gateway; the refusal is in the chain as `rpc.denied`. |
 | `recording a refused call failed` | A refusal couldn't be appended to the chain | Check Postgres. |
 | `export meta-audit record failed` | An export happened but wasn't recorded | Check Postgres; record the export by hand from the log line. |
+| `retention purge ran` | A purge run finished (`records_purged`, `duration_ms`) | Nothing. Other replicas log `retention purge skipped` at debug while one holds the lock. |
+| `retention purge failed` | A purge run failed | Nothing is half-done (the run is one transaction); it is retried on the next interval. Check Postgres. |
+| `recording the retention purge failed` | Records were tombstoned but `audit_log.purged` wasn't written | Check Postgres; the log line has the count. |
+| `crypto-shred incomplete: the key is erased, retry the shred` | A shred erased the key but didn't clear the records or write `subject.shredded` | Run `ShredSubject` again with the same subject and reason. |
+| `legal-hold meta-audit record failed` | A hold was created, listed or released but not recorded | Check Postgres; record it by hand from the log line. |
 
 ## Verifying the chain
 

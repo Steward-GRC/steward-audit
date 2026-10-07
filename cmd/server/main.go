@@ -32,8 +32,10 @@ import (
 	"github.com/Steward-GRC/steward-audit/internal/checkpoint"
 	"github.com/Steward-GRC/steward-audit/internal/config"
 	"github.com/Steward-GRC/steward-audit/internal/ingest"
+	"github.com/Steward-GRC/steward-audit/internal/purge"
 	"github.com/Steward-GRC/steward-audit/internal/readiness"
 	"github.com/Steward-GRC/steward-audit/internal/server"
+	"github.com/Steward-GRC/steward-audit/internal/shred"
 	"github.com/Steward-GRC/steward-audit/internal/store"
 	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
@@ -145,7 +147,11 @@ func run(ctx context.Context, logger log.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	api := server.NewAuditServer(auditStore{records, checkpoints}).WithLogger(logger)
+	retention := store.NewRetentionStore(db)
+	go purge.New(retention, records, cfg.PurgeInterval).WithLogger(logger).Run(ctx)
+	logger.Info("retention purge scheduled", log.F("interval", cfg.PurgeInterval.String()))
+	shredder := shred.NewCryptoShredService(registryEraser{store.NewKeyRegistry(db)}, records, records)
+	api := server.NewAuditServer(auditStore{records, checkpoints}).WithRetention(retention).WithShredder(shredder).WithLogger(logger)
 	logger.Info("serving", log.F("port", cfg.GRPCPort), log.F("probe_port", cfg.ProbePort))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -191,6 +197,15 @@ type auditStore struct {
 
 func (a auditStore) CheckpointsInRange(ctx context.Context, fromID, toID int64) ([]store.Checkpoint, error) {
 	return a.cs.CheckpointsInRange(ctx, fromID, toID)
+}
+
+// registryEraser destroys a subject key by recording its erasure: the service
+// holds no key material of its own (nothing it ingests is encrypted yet), so
+// the registry entry is what refuses the key from then on.
+type registryEraser struct{ reg *store.KeyRegistry }
+
+func (e registryEraser) Delete(ctx context.Context, alias string) error {
+	return e.reg.MarkErased(ctx, alias)
 }
 
 type rabbitLogger struct{ l log.Logger }

@@ -66,7 +66,24 @@ Anyone else is refused with `AUDIT_GROUP_SCOPE_DENIED`, `AUDIT_EXPORT_FORBIDDEN`
 `AUDIT_VERIFY_FORBIDDEN` or `AUDIT_TAIL_FORBIDDEN`.
 
 Page sizes and limits are 1 to 200; anything else means 50. Group managers can't export: record ids
-are global and sequential, so an id range would reach other groups.
+are global and sequential, so an id range would reach other groups. Query and tail leave purged
+tombstones out; export marks each one `purged`, and verify counts them in `records_purged`.
+
+### Retention and crypto-shred
+
+These need `compliance.manage` (`compliance-admin` and `site-admin` today); anyone else gets
+`AUDIT_MANAGE_FORBIDDEN`. Each is recorded in the audit tier, legal-basis exempt, naming the real
+user in `requester`. See [retention](retention.md).
+
+| RPC | What it does | Recorded as |
+| --- | --- | --- |
+| `ShredSubject` | Erases the subject's key, clears its personal data from activity records and returns how many were cleared. `subject_key` and `reason` are required. | `subject.shredded`, with the reason |
+| `CreateLegalHold` | Stops the purge for records matching `subject_filter` and `group_filter` (empty matches all). `reason` is required; the caller is `held_by`. | `legal_hold.created`, with the filters and reason |
+| `ListLegalHolds` | The holds in force, oldest first; `include_released` adds the released ones. | `legal_hold.listed`, with the count |
+| `ReleaseLegalHold` | Lifts a hold in force; an unknown or released one is `AUDIT_HOLD_NOT_FOUND`. | `legal_hold.released` |
+
+A missing required field is `AUDIT_INVALID_ARGUMENT`. A shred that erased the key but didn't finish
+is `AUDIT_SHRED_INCOMPLETE`: run it again.
 
 Errors carry a coded `ErrorInfo`; see [error codes](error-codes.md).
 

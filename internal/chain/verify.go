@@ -23,6 +23,10 @@ type VerifyRecord struct {
 	GroupID     string
 	OccurredAt  time.Time
 	Attributes  map[string]string
+	// Purged marks a record the retention purge tombstoned: its content is
+	// cleared, so only its link is checked and its stored hash is trusted.
+	// The checkpoint roots and the next record's link still cover that hash.
+	Purged bool
 }
 
 // VerifyCheckpoint is a stored Merkle root over [FromRecordID, ToRecordID].
@@ -39,6 +43,7 @@ type VerifyCheckpoint struct {
 type VerifyReport struct {
 	Valid              bool
 	RecordsChecked     int
+	RecordsPurged      int
 	CheckpointsChecked int
 	Errors             []string
 }
@@ -51,7 +56,9 @@ func VerifyChain(records []VerifyRecord, checkpoints []VerifyCheckpoint) VerifyR
 // VerifyChainFrom verifies a contiguous slice of the chain, in ascending id
 // order, whose first prev_hash must equal initialPrevHash (the hash of the
 // record before the slice, or "" at the genesis). It checks every record's
-// link and recomputed hash, and every checkpoint's Merkle root.
+// link and recomputed hash, and every checkpoint's Merkle root. A purged
+// record's hash can't be recomputed: only its link is checked, and it must be
+// in the activity tier, the only tier the purge touches.
 func VerifyChainFrom(initialPrevHash string, records []VerifyRecord, checkpoints []VerifyCheckpoint) VerifyReport {
 	report := VerifyReport{Valid: true, RecordsChecked: len(records)}
 	hashByID := make(map[int64]string, len(records))
@@ -64,6 +71,16 @@ func VerifyChainFrom(initialPrevHash string, records []VerifyRecord, checkpoints
 			report.Errors = append(report.Errors, fmt.Sprintf(
 				"record id=%d: prev_hash %q != expected %q", r.ID, r.PrevHash, prevHash))
 		}
+		prevHash = r.RecordHash
+		if r.Purged {
+			report.RecordsPurged++
+			if r.Tier != "activity" {
+				report.Valid = false
+				report.Errors = append(report.Errors, fmt.Sprintf(
+					"record id=%d: purged but in the %q tier, which is never purged", r.ID, r.Tier))
+			}
+			continue
+		}
 		computed := ComputeHash(r.PrevHash, r.Tier, r.Action, r.ActorUserID, r.Subject, r.GroupID,
 			CanonicalTime(r.OccurredAt), r.Attributes)
 		if computed != r.RecordHash {
@@ -71,7 +88,6 @@ func VerifyChainFrom(initialPrevHash string, records []VerifyRecord, checkpoints
 			report.Errors = append(report.Errors, fmt.Sprintf(
 				"record id=%d (index %d): stored hash %q != recomputed %q", r.ID, i, r.RecordHash, computed))
 		}
-		prevHash = r.RecordHash
 	}
 
 	// Record ids have gaps (a rolled-back insert still consumes a sequence

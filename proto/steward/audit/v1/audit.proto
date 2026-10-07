@@ -22,6 +22,19 @@ service AuditService {
   // ListRecentEvents returns records that occurred at or after a time, for a
   // polling tail.
   rpc ListRecentEvents(ListRecentEventsRequest) returns (ListRecentEventsResponse);
+  // ShredSubject crypto-shreds a subject: its key is destroyed and its
+  // personal data cleared from activity records. Needs compliance.manage; the
+  // shred is itself recorded as "subject.shredded".
+  rpc ShredSubject(ShredSubjectRequest) returns (ShredSubjectResponse);
+  // CreateLegalHold stops the retention purge for matching records. Needs
+  // compliance.manage; recorded as "legal_hold.created".
+  rpc CreateLegalHold(CreateLegalHoldRequest) returns (CreateLegalHoldResponse);
+  // ListLegalHolds lists the holds. Needs compliance.manage; recorded as
+  // "legal_hold.listed".
+  rpc ListLegalHolds(ListLegalHoldsRequest) returns (ListLegalHoldsResponse);
+  // ReleaseLegalHold lifts a hold. Needs compliance.manage; recorded as
+  // "legal_hold.released".
+  rpc ReleaseLegalHold(ReleaseLegalHoldRequest) returns (ReleaseLegalHoldResponse);
 }
 
 // Tier is the retention class an event is stored in.
@@ -94,6 +107,10 @@ message AuditRecord {
   string prev_hash = 9;
   string record_hash = 10;
   bool legal_basis_exempt = 11;
+  // Set on a tombstone the retention purge left: action, actor, subject and
+  // group are empty, and only the link and hash remain. A verifier checks
+  // its link and trusts its hash, which the checkpoints still cover.
+  bool purged = 12;
 }
 
 // Checkpoint is a Merkle root over a record range and its RFC 3161 token.
@@ -112,7 +129,8 @@ message Checkpoint {
 message QueryAuditLogRequest {
   // "audit", "activity", or empty for both.
   string tier = 1;
-  // Empty means every group; only auditors and compliance officers may ask.
+  // Empty means every group, which needs audit.read; a group manager names a
+  // group it manages.
   string group_id = 2;
   string actor_user_id = 3;
   string subject = 4;
@@ -150,6 +168,8 @@ message VerifyAuditChainResponse {
   int32 records_checked = 2;
   repeated string errors = 3;
   int32 checkpoints_checked = 4;
+  // How many of the records checked were purged tombstones.
+  int32 records_purged = 5;
 }
 
 message ListRecentEventsRequest {
@@ -166,4 +186,67 @@ message ListRecentEventsRequest {
 
 message ListRecentEventsResponse {
   repeated AuditRecord records = 1;
+}
+
+message ShredSubjectRequest {
+  // The subject key (the personal-data key alias) to shred.
+  string subject_key = 1;
+  // Why, stored on the "subject.shredded" record. Required.
+  string reason = 2;
+  RequesterIdentity requester = 3;
+}
+
+message ShredSubjectResponse {
+  // How many activity records had their personal data cleared.
+  int32 records_tombstoned = 1;
+  // The id of the "subject.shredded" record.
+  int64 record_id = 2;
+}
+
+// LegalHold freezes the purge for the records it matches. An empty filter
+// matches everything, so a hold with neither freezes the whole activity tier.
+message LegalHold {
+  string hold_uuid = 1;
+  string subject_filter = 2;
+  string group_filter = 3;
+  string reason = 4;
+  // The user who placed it.
+  string held_by = 5;
+  google.protobuf.Timestamp created_at = 6;
+  // Unset while the hold is in force.
+  google.protobuf.Timestamp released_at = 7;
+}
+
+message CreateLegalHoldRequest {
+  // Exact subject to hold, such as "policy:POL-000001"; empty matches all.
+  string subject_filter = 1;
+  // Exact group id to hold; empty matches all.
+  string group_filter = 2;
+  // Why. Required.
+  string reason = 3;
+  RequesterIdentity requester = 4;
+}
+
+message CreateLegalHoldResponse {
+  LegalHold hold = 1;
+}
+
+message ListLegalHoldsRequest {
+  // Also list released holds.
+  bool include_released = 1;
+  RequesterIdentity requester = 2;
+}
+
+message ListLegalHoldsResponse {
+  // Oldest first.
+  repeated LegalHold holds = 1;
+}
+
+message ReleaseLegalHoldRequest {
+  string hold_uuid = 1;
+  RequesterIdentity requester = 2;
+}
+
+message ReleaseLegalHoldResponse {
+  LegalHold hold = 1;
 }

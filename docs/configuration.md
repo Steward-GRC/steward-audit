@@ -23,6 +23,7 @@ value that doesn't parse stops the service with every problem listed; nothing fa
 | `AUDIT_TSA_URL` | empty | The RFC 3161 time-stamp authority (`http` or `https`). Empty turns checkpoint anchoring off. |
 | `AUDIT_CHECKPOINT_INTERVAL` | `15m` | How often a checkpoint is made. |
 | `AUDIT_CHECKPOINT_BATCH_SIZE` | `10000` | The most records one checkpoint covers. A backlog drains one batch per interval. |
+| `AUDIT_PURGE_INTERVAL` | `1h` | How often the activity-tier retention purge runs. It also runs once at start-up. Every replica schedules it; an advisory lock lets one purge at a time. |
 | `LOG_LEVEL` | go-log's default | `trace`, `debug`, `info`, `warn` or `error`. |
 | `LOG_FORMAT` | go-log's default | `console` locally, `json` in every cluster. |
 
@@ -37,6 +38,7 @@ allow-list in code (`internal/server/callers.go`):
 | --- | --- |
 | `QueryAuditLog`, `ExportAuditSegment`, `VerifyAuditChain` | gateway, on behalf of the signed-in user it names in `requester` |
 | `ListRecentEvents` | none (the gateway's live tail reads the broker) |
+| `ShredSubject`, `CreateLegalHold`, `ListLegalHolds`, `ReleaseLegalHold` | none yet: added for the gateway once it serves them |
 
 A missing or rejected token is `Unauthenticated`; a verified caller not listed for the method is
 `PermissionDenied`. Each refusal is logged and appended to the chain as an `rpc.denied` record in

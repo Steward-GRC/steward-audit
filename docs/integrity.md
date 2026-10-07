@@ -17,6 +17,13 @@ prev_hash \0 tier \0 action \0 actor_user_id \0 subject \0 group_id \0 occurred_
 Changing any stored field, or removing a record, breaks that record's hash or the next record's
 link. Personal data (`pii_ciphertext`) is not hashed, so crypto-shred doesn't break the chain.
 
+Records are never deleted. The retention purge tombstones an expired activity record instead: its
+action, actor, subject, group, attributes and personal data are cleared and `purged_at` is set,
+while its id, tier, times, `prev_hash` and `record_hash` stay. A tombstone's hash can't be
+recomputed, so a verifier checks its link and trusts its stored hash; the next record's link and
+every checkpoint root over it still cover that hash, so replacing it is caught. A tombstone outside
+the activity tier fails verification: nothing else is ever purged.
+
 Appends run in a Serializable transaction that locks the current tip, so concurrent appends queue
 up; a serialization conflict is retried by go-postgres. Record ids can have gaps (a rolled-back
 insert still uses a sequence value); a gap is not tampering.
@@ -49,8 +56,10 @@ authority's certificate chain are checked offline from the stored DER (for examp
 ## Verifying
 
 `VerifyAuditChain` recomputes every hash and link in a range, seeding the first link with the hash
-of the record before the range, and recomputes the root of each checkpoint wholly inside it.
+of the record before the range, and recomputes the root of each checkpoint wholly inside it. A
+tombstone's link is checked and its hash taken as stored; `records_purged` says how many there
+were.
 
 For an independent check, `ExportAuditSegment` returns the same records and checkpoints, including
 each checkpoint's record range and token, so a verifier outside the service can redo all of it and
-check the tokens without trusting this server.
+check the tokens without trusting this server. Each exported tombstone has `purged` set.

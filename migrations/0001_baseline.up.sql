@@ -2,8 +2,10 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- The append-only, hash-chained store of audit and activity events. Rows are
--- never updated by the application except to tombstone personal data, and are
--- deleted only by the activity-tier retention purge.
+-- never deleted, and updated by the application only to tombstone: a
+-- crypto-shred clears personal data, and the activity-tier retention purge
+-- clears a record's content and sets purged_at, keeping its id, link and hash
+-- so the chain and every checkpoint still verify.
 CREATE TABLE audit_records (
     id              BIGSERIAL PRIMARY KEY,
     record_uuid     UUID        NOT NULL DEFAULT gen_random_uuid(),
@@ -23,7 +25,11 @@ CREATE TABLE audit_records (
     record_hash     TEXT    NOT NULL,
     legal_basis_exempt BOOLEAN NOT NULL DEFAULT FALSE,
     retained_until  TIMESTAMPTZ,
-    UNIQUE (record_uuid)
+    -- Set when the retention purge tombstoned the record.
+    purged_at       TIMESTAMPTZ,
+    UNIQUE (record_uuid),
+    -- Only the activity tier is ever purged.
+    CHECK (purged_at IS NULL OR tier = 'activity')
 );
 
 CREATE INDEX audit_records_group_id_idx      ON audit_records (group_id);
