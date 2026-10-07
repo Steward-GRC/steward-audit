@@ -8,6 +8,7 @@ package auditerr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	apperr "github.com/Bugs5382/go-apperr"
@@ -28,6 +29,10 @@ const (
 	CodeInvalidPageToken = 2005
 	CodeTailForbidden    = 2006
 	CodeVerifyForbidden  = 2007
+	CodeManageForbidden  = 2008
+	CodeInvalidArgument  = 2009
+	CodeHoldNotFound     = 2010
+	CodeShredIncomplete  = 2011
 )
 
 // Entries returns the registry entries.
@@ -55,6 +60,18 @@ func Entries() []apperr.Entry {
 		{Code: CodeVerifyForbidden, Symbol: "AUDIT_VERIFY_FORBIDDEN", Category: apperr.CategoryPermissionDenied,
 			Title: "audit verify", Cause: "the caller has neither audit.read nor a group it manages",
 			UserSafe: true, Message: "You don't have permission to verify the audit log."},
+		{Code: CodeManageForbidden, Symbol: "AUDIT_MANAGE_FORBIDDEN", Category: apperr.CategoryPermissionDenied,
+			Title: "audit retention", Cause: "a caller without compliance.manage asked to shred a subject or manage legal holds",
+			UserSafe: true, Message: "You don't have permission to shred personal data or manage legal holds."},
+		{Code: CodeInvalidArgument, Symbol: "AUDIT_INVALID_ARGUMENT", Category: apperr.CategoryInvalid,
+			Title: "audit retention", Cause: "a required field (the subject key, the reason or the hold id) was empty",
+			UserSafe: true, Message: "A required field is missing. Give a subject and a reason."},
+		{Code: CodeHoldNotFound, Symbol: "AUDIT_HOLD_NOT_FOUND", Category: apperr.CategoryNotFound,
+			Title: "legal hold", Cause: "no legal hold in force has that id; it may already be released",
+			UserSafe: true, Message: "That legal hold doesn't exist or is already released."},
+		{Code: CodeShredIncomplete, Symbol: "AUDIT_SHRED_INCOMPLETE", Category: apperr.CategoryInternal,
+			Title: "crypto-shred", Cause: "the subject's key is destroyed but clearing its records or writing the shred record failed; the cause is only logged",
+			UserSafe: true, Message: "The personal data is unreadable, but the shred didn't finish. Run it again."},
 	}
 }
 
@@ -101,6 +118,7 @@ var (
 	errInvalidPageToken = errors.New("audit: invalid page token")
 	errTailForbidden    = errors.New("audit: tail forbidden")
 	errVerifyForbidden  = errors.New("audit: verify forbidden")
+	errManageForbidden  = errors.New("audit: retention management forbidden")
 )
 
 // ExportForbidden codes a refused export.
@@ -120,6 +138,20 @@ func TailForbidden() error { return apperr.Coded(CodeTailForbidden, errTailForbi
 
 // VerifyForbidden codes a refused verify.
 func VerifyForbidden() error { return apperr.Coded(CodeVerifyForbidden, errVerifyForbidden) }
+
+// ManageForbidden codes a refused shred or legal-hold call.
+func ManageForbidden() error { return apperr.Coded(CodeManageForbidden, errManageForbidden) }
+
+// InvalidArgument codes a missing required field; field names it.
+func InvalidArgument(field string) error {
+	return apperr.WithMeta(apperr.Coded(CodeInvalidArgument, fmt.Errorf("audit: %s is required", field)), apperr.Meta("field", field))
+}
+
+// HoldNotFound codes an unknown or released hold.
+func HoldNotFound(cause error) error { return apperr.Coded(CodeHoldNotFound, cause) }
+
+// ShredIncomplete codes a shred that destroyed the key but didn't finish.
+func ShredIncomplete(cause error) error { return apperr.Coded(CodeShredIncomplete, cause) }
 
 type logSink struct{ l log.Logger }
 

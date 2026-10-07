@@ -5,10 +5,12 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	postgres "github.com/Bugs5382/go-postgres"
+	"github.com/jackc/pgx/v5"
 )
 
 // LegalHoldInput is a new legal hold. An empty filter matches everything, so a
@@ -46,17 +48,62 @@ func (s *RetentionStore) GetRetentionDays(ctx context.Context, tier string) (*in
 	return days, nil
 }
 
-// CreateLegalHold stores a hold and returns its UUID.
-func (s *RetentionStore) CreateLegalHold(ctx context.Context, in LegalHoldInput) (string, error) {
-	var id string
-	if err := s.db.Querier().QueryRow(ctx, `
+// ErrHoldNotFound means no unreleased hold has that UUID.
+var ErrHoldNotFound = errors.New("store: no active legal hold with that id")
+
+// LegalHold is a stored hold. ReleasedAt is nil while it is in force.
+type LegalHold struct {
+	UUID          string
+	SubjectFilter string
+	GroupFilter   string
+	Reason        string
+	HeldBy        string
+	CreatedAt     time.Time
+	ReleasedAt    *time.Time
+}
+
+const holdColumns = `hold_uuid::text, COALESCE(subject_filter,''), COALESCE(group_filter,''), reason, held_by,
+	created_at, released_at`
+
+func scanHold(row pgx.Row) (LegalHold, error) {
+	var h LegalHold
+	err := row.Scan(&h.UUID, &h.SubjectFilter, &h.GroupFilter, &h.Reason, &h.HeldBy, &h.CreatedAt, &h.ReleasedAt)
+	return h, err
+}
+
+// CreateLegalHold stores a hold.
+func (s *RetentionStore) CreateLegalHold(ctx context.Context, in LegalHoldInput) (LegalHold, error) {
+	h, err := scanHold(s.db.Querier().QueryRow(ctx, `
 		INSERT INTO legal_holds (subject_filter, group_filter, reason, held_by)
-		VALUES ($1,$2,$3,$4) RETURNING hold_uuid`,
-		nilIfEmpty(in.SubjectFilter), nilIfEmpty(in.GroupFilter), in.Reason, in.HeldBy,
-	).Scan(&id); err != nil {
-		return "", fmt.Errorf("store: create legal hold: %w", err)
+		VALUES ($1,$2,$3,$4) RETURNING `+holdColumns,
+		nilIfEmpty(in.SubjectFilter), nilIfEmpty(in.GroupFilter), in.Reason, in.HeldBy))
+	if err != nil {
+		return LegalHold{}, fmt.Errorf("store: create legal hold: %w", err)
 	}
-	return id, nil
+	return h, nil
+}
+
+// ListLegalHolds returns the holds in force, oldest first, or every hold when
+// includeReleased is set.
+func (s *RetentionStore) ListLegalHolds(ctx context.Context, includeReleased bool) ([]LegalHold, error) {
+	rows, err := s.db.Querier().Query(ctx, `SELECT `+holdColumns+` FROM legal_holds
+		WHERE $1 OR released_at IS NULL ORDER BY id`, includeReleased)
+	if err != nil {
+		return nil, fmt.Errorf("store: list legal holds: %w", err)
+	}
+	defer rows.Close()
+	var out []LegalHold
+	for rows.Next() {
+		h, err := scanHold(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan legal hold: %w", err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list legal holds: %w", err)
+	}
+	return out, nil
 }
 
 // IsUnderLegalHold reports whether an unreleased hold matches the subject and
@@ -73,32 +120,75 @@ func (s *RetentionStore) IsUnderLegalHold(ctx context.Context, subject, groupID 
 	return held, nil
 }
 
-// ReleaseLegalHold releases a hold.
-func (s *RetentionStore) ReleaseLegalHold(ctx context.Context, holdUUID string) error {
-	if _, err := s.db.Querier().Exec(ctx,
-		`UPDATE legal_holds SET released_at = $1 WHERE hold_uuid = $2`, time.Now().UTC(), holdUUID); err != nil {
-		return fmt.Errorf("store: release legal hold: %w", err)
+// ReleaseLegalHold releases the unreleased hold holdUUID and returns it, or
+// ErrHoldNotFound.
+func (s *RetentionStore) ReleaseLegalHold(ctx context.Context, holdUUID string) (LegalHold, error) {
+	h, err := scanHold(s.db.Querier().QueryRow(ctx, `
+		UPDATE legal_holds SET released_at = $1
+		 WHERE hold_uuid::text = $2 AND released_at IS NULL
+		RETURNING `+holdColumns, time.Now().UTC(), holdUUID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LegalHold{}, ErrHoldNotFound
 	}
-	return nil
+	if err != nil {
+		return LegalHold{}, fmt.Errorf("store: release legal hold: %w", err)
+	}
+	return h, nil
 }
 
-// PurgeExpired deletes activity records past retained_until that are not
-// legal-basis exempt and match no unreleased hold, and returns how many it
-// deleted. Audit-tier records are never purged.
-func (s *RetentionStore) PurgeExpired(ctx context.Context, now time.Time) (int64, error) {
-	tag, err := s.db.Querier().Exec(ctx, `
-		DELETE FROM audit_records
-		WHERE tier = 'activity'
-		  AND legal_basis_exempt = FALSE
-		  AND retained_until IS NOT NULL
-		  AND retained_until < $1
-		  AND NOT EXISTS (
-		      SELECT 1 FROM legal_holds lh
-		      WHERE lh.released_at IS NULL
-		        AND (lh.subject_filter IS NULL OR lh.subject_filter = audit_records.subject)
-		        AND (lh.group_filter  IS NULL OR lh.group_filter  = audit_records.group_id))`, now)
+// PurgeLockKey is the Postgres advisory lock a purge run holds, so only one
+// replica purges at a time.
+const PurgeLockKey int64 = 0x5354_4155_5052_4700 // "STAUPRG"
+
+// PurgeResult is one purge run.
+type PurgeResult struct {
+	// Purged is how many records were tombstoned.
+	Purged int64
+	// Skipped means another replica held the purge lock, so nothing ran.
+	Skipped bool
+}
+
+// PurgeExpired tombstones the activity records past retained_until that are
+// not legal-basis exempt and match no unreleased hold. A tombstone keeps its
+// id, tier, times, link and hash, so the chain and every checkpoint over it
+// still verify, and no checkpoint loses the row it is bounded by; its action,
+// actor, subject, group, attributes and personal data are cleared. Audit-tier
+// records are never purged. The run holds PurgeLockKey for its transaction and
+// is skipped while another replica holds it.
+func (s *RetentionStore) PurgeExpired(ctx context.Context, now time.Time) (PurgeResult, error) {
+	var res PurgeResult
+	err := s.db.RunInTx(ctx, func(tx pgx.Tx) error {
+		res = PurgeResult{}
+		var locked bool
+		if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1)`, PurgeLockKey).Scan(&locked); err != nil {
+			return err
+		}
+		if !locked {
+			res.Skipped = true
+			return nil
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE audit_records
+			   SET action = '', actor_user_id = NULL, subject = NULL, group_id = NULL, attributes = '{}',
+			       pii_subject_key = NULL, pii_ciphertext = NULL, purged_at = $1
+			 WHERE tier = 'activity'
+			   AND purged_at IS NULL
+			   AND legal_basis_exempt = FALSE
+			   AND retained_until IS NOT NULL
+			   AND retained_until < $1
+			   AND NOT EXISTS (
+			       SELECT 1 FROM legal_holds lh
+			       WHERE lh.released_at IS NULL
+			         AND (lh.subject_filter IS NULL OR lh.subject_filter = audit_records.subject)
+			         AND (lh.group_filter  IS NULL OR lh.group_filter  = audit_records.group_id))`, now)
+		if err != nil {
+			return err
+		}
+		res.Purged = tag.RowsAffected()
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("store: purge expired: %w", err)
+		return PurgeResult{}, fmt.Errorf("store: purge expired: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return res, nil
 }

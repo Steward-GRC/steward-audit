@@ -39,8 +39,10 @@ type QueryStore interface {
 // authenticated; this service does not re-authenticate the user.
 type AuditServer struct {
 	auditv1.UnimplementedAuditServiceServer
-	store  QueryStore
-	logger log.Logger
+	store    QueryStore
+	holds    HoldStore
+	shredder Shredder
+	logger   log.Logger
 }
 
 // NewAuditServer returns an AuditServer on s.
@@ -58,9 +60,11 @@ func (s *AuditServer) WithLogger(l log.Logger) *AuditServer {
 // catalog's audit.read reads every group; otherwise the caller reads only the
 // groups it manages.
 type caller struct {
-	userID   string
-	readsAll bool
-	managed  []string
+	userID string
+	// readsAll holds audit.read; managesRetention holds compliance.manage.
+	readsAll         bool
+	managesRetention bool
+	managed          []string
 }
 
 func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
@@ -74,9 +78,10 @@ func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
 		}
 	}
 	return caller{
-		userID:   r.GetUserId(),
-		readsAll: stewardauthz.HasCapability(subject, stewardauthz.AuditRead),
-		managed:  r.GetManagedGroups(),
+		userID:           r.GetUserId(),
+		readsAll:         stewardauthz.HasCapability(subject, stewardauthz.AuditRead),
+		managesRetention: stewardauthz.HasCapability(subject, stewardauthz.ComplianceManage),
+		managed:          r.GetManagedGroups(),
 	}, nil
 }
 
@@ -198,7 +203,7 @@ func (s *AuditServer) VerifyAuditChain(ctx context.Context, req *auditv1.VerifyA
 			log.F("to_record_id", to), log.F("errors", len(report.Errors)))
 	}
 	return &auditv1.VerifyAuditChainResponse{
-		Valid: report.Valid, RecordsChecked: toInt32(report.RecordsChecked),
+		Valid: report.Valid, RecordsChecked: toInt32(report.RecordsChecked), RecordsPurged: toInt32(report.RecordsPurged),
 		CheckpointsChecked: toInt32(report.CheckpointsChecked), Errors: report.Errors,
 	}, nil
 }
@@ -244,7 +249,7 @@ func toProtos(recs []store.Record) []*auditv1.AuditRecord {
 		out[i] = &auditv1.AuditRecord{
 			Id: r.ID, RecordUuid: r.RecordUUID, Tier: r.Tier, Action: r.Action, ActorUserId: r.ActorUserID,
 			Subject: r.Subject, GroupId: r.GroupID, OccurredAt: timestamppb.New(r.OccurredAt),
-			PrevHash: r.PrevHash, RecordHash: r.RecordHash, LegalBasisExempt: r.LegalBasisExempt,
+			PrevHash: r.PrevHash, RecordHash: r.RecordHash, LegalBasisExempt: r.LegalBasisExempt, Purged: r.Purged,
 		}
 	}
 	return out

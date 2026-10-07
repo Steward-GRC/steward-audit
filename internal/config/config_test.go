@@ -104,6 +104,8 @@ func TestLoadRejectsBadSettings(t *testing.T) {
 		"zero interval":    {"AUDIT_CHECKPOINT_INTERVAL", "0s"},
 		"bad batch":        {"AUDIT_CHECKPOINT_BATCH_SIZE", "many"},
 		"zero batch":       {"AUDIT_CHECKPOINT_BATCH_SIZE", "0"},
+		"bad purge":        {"AUDIT_PURGE_INTERVAL", "nightly"},
+		"zero purge":       {"AUDIT_PURGE_INTERVAL", "0s"},
 		"tsa not http":     {"AUDIT_TSA_URL", "ftp://tsa.example.org"},
 		"tsa not absolute": {"AUDIT_TSA_URL", "tsa.example.org"},
 	} {
@@ -115,5 +117,17 @@ func TestLoadRejectsBadSettings(t *testing.T) {
 		if _, err := Load(env(m)); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+}
+
+func TestLoadPurgeInterval(t *testing.T) {
+	base := map[string]string{"DATABASE_DSN": dsn, "RABBITMQ_URL": "amqp://mq.example.org", "WORKLOAD_AUTH": "disabled"}
+	c, err := Load(env(base))
+	if err != nil || c.PurgeInterval != time.Hour {
+		t.Fatalf("default purge interval = %v, %v; want 1h", c.PurgeInterval, err)
+	}
+	base["AUDIT_PURGE_INTERVAL"] = "6h"
+	if c, err := Load(env(base)); err != nil || c.PurgeInterval != 6*time.Hour {
+		t.Fatalf("purge interval = %v, %v; want 6h", c.PurgeInterval, err)
 	}
 }

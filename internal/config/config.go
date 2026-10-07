@@ -36,6 +36,8 @@ type Config struct {
 	TSAURL              string
 	CheckpointInterval  time.Duration
 	CheckpointBatchSize int
+	// PurgeInterval is how often the activity-tier retention purge runs.
+	PurgeInterval time.Duration
 }
 
 // Load reads the settings through getenv (os.Getenv in production).
@@ -78,6 +80,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.CheckpointBatchSize, err = strconv.Atoi(or("AUDIT_CHECKPOINT_BATCH_SIZE", "10000")); err != nil || c.CheckpointBatchSize <= 0 {
 		errs = append(errs, errors.New("AUDIT_CHECKPOINT_BATCH_SIZE must be a positive integer"))
+	}
+	if c.PurgeInterval, err = time.ParseDuration(or("AUDIT_PURGE_INTERVAL", "1h")); err != nil || c.PurgeInterval <= 0 {
+		errs = append(errs, errors.New("AUDIT_PURGE_INTERVAL must be a positive duration"))
 	}
 	return c, errors.Join(errs...)
 }

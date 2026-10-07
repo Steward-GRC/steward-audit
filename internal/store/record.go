@@ -39,6 +39,9 @@ type Record struct {
 	RecordUUID string
 	PrevHash   string
 	RecordHash string
+	// Purged marks a tombstone the retention purge left: its content is
+	// cleared and only its id, tier, times, link and hash remain.
+	Purged bool
 	RecordInput
 }
 
@@ -47,7 +50,7 @@ func (r Record) VerifyRecord() chain.VerifyRecord {
 	return chain.VerifyRecord{
 		ID: r.ID, PrevHash: r.PrevHash, RecordHash: r.RecordHash, Tier: r.Tier, Action: r.Action,
 		ActorUserID: r.ActorUserID, Subject: r.Subject, GroupID: r.GroupID, OccurredAt: r.OccurredAt,
-		Attributes: r.Attributes,
+		Attributes: r.Attributes, Purged: r.Purged,
 	}
 }
 
@@ -76,7 +79,7 @@ const defaultLimit = 50
 const recordColumns = `id, record_uuid, tier, action,
 	COALESCE(actor_user_id,''), COALESCE(subject,''), COALESCE(group_id,''),
 	occurred_at, attributes, pii_subject_key, pii_ciphertext,
-	legal_basis_exempt, retained_until, COALESCE(prev_hash,''), record_hash`
+	legal_basis_exempt, retained_until, COALESCE(prev_hash,''), record_hash, purged_at IS NOT NULL`
 
 // RecordStore is the append-only record chain.
 type RecordStore struct{ db *postgres.DB }
@@ -126,15 +129,18 @@ func (s *RecordStore) AppendRecord(ctx context.Context, in RecordInput) (*Record
 }
 
 // RecordsInRange returns the records with fromID <= id <= toID in id order,
-// the order the chain verifies in.
+// the order the chain verifies in. Tombstones are included: the chain needs
+// their links and hashes.
 func (s *RecordStore) RecordsInRange(ctx context.Context, fromID, toID int64) ([]Record, error) {
 	return s.query(ctx, `SELECT `+recordColumns+` FROM audit_records WHERE id BETWEEN $1 AND $2 ORDER BY id`, fromID, toID)
 }
 
 // QueryRecords returns one page of records matching q, in id order.
+// Tombstones are left out: they have nothing left to show.
 func (s *RecordStore) QueryRecords(ctx context.Context, q QueryFilter) ([]Record, error) {
 	return s.query(ctx, `SELECT `+recordColumns+` FROM audit_records
-		 WHERE ($1 = '' OR tier = $1)
+		 WHERE purged_at IS NULL
+		   AND ($1 = '' OR tier = $1)
 		   AND ($2 = '' OR group_id = $2)
 		   AND ($3 = '' OR actor_user_id = $3)
 		   AND ($4 = '' OR subject = $4)
@@ -145,9 +151,11 @@ func (s *RecordStore) QueryRecords(ctx context.Context, q QueryFilter) ([]Record
 
 // ListRecentRecords returns records that occurred at or after f.Since, in id
 // order, so the page is a stable slice of the chain even when times collide.
+// Tombstones are left out.
 func (s *RecordStore) ListRecentRecords(ctx context.Context, f RecentFilter) ([]Record, error) {
 	return s.query(ctx, `SELECT `+recordColumns+` FROM audit_records
-		 WHERE occurred_at >= $1
+		 WHERE purged_at IS NULL
+		   AND occurred_at >= $1
 		   AND ($2 = '' OR actor_user_id = $2)
 		   AND ($3 = '' OR action = $3)
 		 ORDER BY id LIMIT $4`,
@@ -223,7 +231,7 @@ func (s *RecordStore) query(ctx context.Context, sql string, args ...any) ([]Rec
 		)
 		if err := rows.Scan(&r.ID, &r.RecordUUID, &r.Tier, &r.Action, &r.ActorUserID, &r.Subject, &r.GroupID,
 			&r.OccurredAt, &attrs, &piiKey, &r.PIICiphertext, &r.LegalBasisExempt, &retainedUntil,
-			&r.PrevHash, &r.RecordHash); err != nil {
+			&r.PrevHash, &r.RecordHash, &r.Purged); err != nil {
 			return nil, fmt.Errorf("store: scan record: %w", err)
 		}
 		if r.Attributes, err = unmarshalAttributes(attrs); err != nil {

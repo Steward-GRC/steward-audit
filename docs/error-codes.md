@@ -14,3 +14,7 @@ caller; every other code is sent as `Code N: Internal Error`.
 | 2005 | `AUDIT_INVALID_PAGE_TOKEN` | audit query | the page token is not one this service issued | yes |
 | 2006 | `AUDIT_TAIL_FORBIDDEN` | audit tail | the caller has neither audit.read nor a group it manages | yes |
 | 2007 | `AUDIT_VERIFY_FORBIDDEN` | audit verify | the caller has neither audit.read nor a group it manages | yes |
+| 2008 | `AUDIT_MANAGE_FORBIDDEN` | audit retention | a caller without compliance.manage asked to shred a subject or manage legal holds | yes |
+| 2009 | `AUDIT_INVALID_ARGUMENT` | audit retention | a required field (the subject key, the reason or the hold id) was empty | yes |
+| 2010 | `AUDIT_HOLD_NOT_FOUND` | legal hold | no legal hold in force has that id; it may already be released | yes |
+| 2011 | `AUDIT_SHRED_INCOMPLETE` | crypto-shred | the subject's key is destroyed but clearing its records or writing the shred record failed; the cause is only logged | yes |
