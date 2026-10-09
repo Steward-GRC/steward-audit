@@ -44,9 +44,9 @@ A missing or rejected token is `Unauthenticated`; a verified caller not listed f
 `PermissionDenied`. Each refusal is logged and appended to the chain as an `rpc.denied` record in
 the audit tier. While no key set has loaded (the issuer unreachable, or refusing the fetch) every
 call is refused with `Unavailable`, and readiness reports `jwks` as a failing required dependency.
-Events still arrive over RabbitMQ and are not affected. `internal/workloadauth` is a byte-identical
-copy of steward-core's, pinned by `STEWARD_CORE_REF` in `proto-refs.env` and compared in CI by
-`scripts/workloadauth-check.sh`; change it in steward-core first.
+Events still arrive over RabbitMQ and are not affected. Service-to-service authentication comes
+from `github.com/Bugs5382/go-workload-identity`, with Steward's audience and caller-name mapping
+supplied in `internal/config` (`config.StewardWorkload`).
 
 ## Choosing a time-stamp authority
 

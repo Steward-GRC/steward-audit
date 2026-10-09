@@ -11,6 +11,7 @@ require (
 	github.com/Bugs5382/go-otel v1.3.2
 	github.com/Bugs5382/go-postgres v1.2.2
 	github.com/Bugs5382/go-rabbitmq v1.3.0
+	github.com/Bugs5382/go-workload-identity v1.0.0
 	github.com/Steward-GRC/steward-authz v0.0.0-20261007061029-f4cd4a7768e5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.10.0
