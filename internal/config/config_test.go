@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	workloadidentity "github.com/Bugs5382/go-workload-identity"
 	"github.com/Steward-GRC/steward-audit/internal/fixture"
-	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 func env(m map[string]string) func(string) string {
@@ -52,9 +52,10 @@ func TestLoadReadsEverySetting(t *testing.T) {
 		c.OTLPEndpoint != "otel.example.org:4317" || c.TSAURL != fixture.TSAURL || c.CheckpointInterval != time.Minute || c.CheckpointBatchSize != 500 {
 		t.Fatalf("settings: %+v", c)
 	}
-	want := workloadauth.Config{
+	want := workloadidentity.Config{
 		Issuer: "https://issuer.example.org", JWKSURL: "https://issuer.example.org/openid/v1/jwks", CAFile: "/oidc/ca.crt",
-		BearerFile: "/oidc/token", Audience: "steward", AllowedServiceAccounts: []string{"steward/steward-gateway", "steward/steward-reporting"},
+		BearerFile: "/oidc/token", Audience: "steward", ServiceAccountPrefix: WorkloadServiceAccountPrefix,
+		AllowedServiceAccounts: []string{"steward/steward-gateway", "steward/steward-reporting"},
 	}
 	if c.ProbePort != "8081" || !c.WorkloadAuthEnabled || !reflect.DeepEqual(c.WorkloadAuth, want) {
 		t.Fatalf("probe and workload auth: %+v", c)
@@ -68,7 +69,7 @@ func base() map[string]string {
 // Unset WORKLOAD_AUTH means on: with no issuer the boot stops instead of
 // serving every caller unauthenticated.
 func TestLoadFailsClosedWithoutWorkloadAuth(t *testing.T) {
-	if _, err := Load(env(base())); !errors.Is(err, workloadauth.ErrNotConfigured) {
+	if _, err := Load(env(base())); !errors.Is(err, workloadidentity.ErrNotConfigured) {
 		t.Fatalf("no issuer and no explicit off switch must stop the boot, got %v", err)
 	}
 }
