@@ -9,9 +9,9 @@ import (
 
 	log "github.com/Bugs5382/go-log"
 
+	workloadidentity "github.com/Bugs5382/go-workload-identity"
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
 	"github.com/Steward-GRC/steward-audit/internal/store"
-	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 // CallerGateway is the gateway's caller name, from the service account
@@ -24,10 +24,10 @@ const CallerGateway = "gateway"
 // legal-hold methods. ListRecentEvents has no caller (the
 // gateway's live tail reads the broker), so it is refused like anything else
 // not listed. Events never come through here: they arrive over RabbitMQ.
-func CallerPolicy() workloadauth.Policy {
-	p := workloadauth.Policy{}
+func CallerPolicy() workloadidentity.Policy {
+	p := workloadidentity.Policy{}
 	for _, md := range auditv1.AuditService_ServiceDesc.Methods {
-		p["/"+auditv1.AuditService_ServiceDesc.ServiceName+"/"+md.MethodName] = map[string]workloadauth.Access{}
+		p["/"+auditv1.AuditService_ServiceDesc.ServiceName+"/"+md.MethodName] = map[string]workloadidentity.Access{}
 	}
 	for _, m := range []string{
 		auditv1.AuditService_QueryAuditLog_FullMethodName,
@@ -38,7 +38,7 @@ func CallerPolicy() workloadauth.Policy {
 		auditv1.AuditService_ListLegalHolds_FullMethodName,
 		auditv1.AuditService_ReleaseLegalHold_FullMethodName,
 	} {
-		p[m][CallerGateway] = workloadauth.OnBehalf
+		p[m][CallerGateway] = workloadidentity.OnBehalf
 	}
 	return p
 }
@@ -53,8 +53,8 @@ type Appender interface {
 // publishing to its own exchange would only queue the record behind the
 // consumer for no gain. The actor is the authenticated caller (or
 // "unauthenticated"), never a user the call claimed.
-func AuditDenial(records Appender, lg log.Logger) workloadauth.DenyHook {
-	return func(ctx context.Context, d workloadauth.Denial) {
+func AuditDenial(records Appender, lg log.Logger) workloadidentity.DenyHook {
+	return func(ctx context.Context, d workloadidentity.Denial) {
 		caller := d.Caller.Name
 		if caller == "" {
 			caller = "unauthenticated"

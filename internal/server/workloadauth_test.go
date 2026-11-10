@@ -32,10 +32,11 @@ import (
 	reflectionpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/grpc/status"
 
+	workloadidentity "github.com/Bugs5382/go-workload-identity"
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
+	"github.com/Steward-GRC/steward-audit/internal/config"
 	"github.com/Steward-GRC/steward-audit/internal/readiness"
 	"github.com/Steward-GRC/steward-audit/internal/store"
-	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 const testNS = "steward"
@@ -126,16 +127,16 @@ func serve(t *testing.T, opts Options, fs *fakeQueryStore) (*grpc.ClientConn, fu
 func authServe(t *testing.T) (*localIssuer, *grpc.ClientConn, *fakeQueryStore, func()) {
 	t.Helper()
 	iss := newLocalIssuer(t)
-	v, err := workloadauth.NewVerifier(workloadauth.Config{
-		Issuer: iss.url, CAFile: iss.caFile, Audience: "steward",
+	v, err := workloadidentity.NewVerifier(config.StewardWorkload(workloadidentity.Config{
+		Issuer: iss.url, CAFile: iss.caFile,
 		AllowedServiceAccounts: []string{testNS + "/steward-gateway", testNS + "/steward-reporting"},
-	}, log.Nop())
+	}), log.Nop())
 	require.NoError(t, err)
 	require.NoError(t, v.Refresh(context.Background()))
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
 	conn, stop := serve(t, Options{Auth: &Auth{
 		Verifier: v, Policy: CallerPolicy(),
-		Options: []workloadauth.Option{workloadauth.WithDenyHook(AuditDenial(fs, log.Nop()))},
+		Options: []workloadidentity.Option{workloadidentity.WithDenyHook(AuditDenial(fs, log.Nop()))},
 	}}, fs)
 	return iss, conn, fs, stop
 }
@@ -207,11 +208,11 @@ func TestWorkloadAuthRecordsEachRefusalInTheChain(t *testing.T) {
 	require.Equal(t, "service:unauthenticated", anon.ActorUserID)
 	require.Equal(t, auditv1.AuditService_QueryAuditLog_FullMethodName, anon.Subject)
 	require.Equal(t, codes.Unauthenticated.String(), anon.Attributes["code"])
-	require.Equal(t, workloadauth.ReasonNoToken, anon.Attributes["reason"])
+	require.Equal(t, workloadidentity.ReasonNoToken, anon.Attributes["reason"])
 	require.False(t, anon.OccurredAt.IsZero())
 	require.Equal(t, "service:reporting", rep.ActorUserID)
 	require.Equal(t, testNS+"/steward-reporting", rep.Attributes["service_account"])
-	require.Equal(t, workloadauth.ReasonMethodNotAllowed, rep.Attributes["reason"])
+	require.Equal(t, workloadidentity.ReasonMethodNotAllowed, rep.Attributes["reason"])
 }
 
 func TestWorkloadAuthLeavesHealthAndReflectionOpen(t *testing.T) {
@@ -251,10 +252,10 @@ func (upBroker) Healthy() bool { return true }
 func TestWorkloadAuthFailsClosedWhileTheJWKSIsRefused(t *testing.T) {
 	iss := newLocalIssuer(t)
 	iss.jwksStatus.Store(http.StatusUnauthorized)
-	v, err := workloadauth.NewVerifier(workloadauth.Config{
-		Issuer: iss.url, CAFile: iss.caFile, Audience: "steward",
+	v, err := workloadidentity.NewVerifier(config.StewardWorkload(workloadidentity.Config{
+		Issuer: iss.url, CAFile: iss.caFile,
 		AllowedServiceAccounts: []string{testNS + "/steward-gateway"},
-	}, log.Nop())
+	}), log.Nop())
 	require.NoError(t, err)
 	require.Error(t, v.Refresh(context.Background()), "a 401 from the JWKS is a failed refresh")
 
@@ -309,16 +310,16 @@ func TestWorkloadAuthFailsClosedWhileTheJWKSIsRefused(t *testing.T) {
 // methods it calls; nobody on anything else.
 func TestCallerPolicyListsOnlyTheGatewaysMethods(t *testing.T) {
 	p := CallerPolicy()
-	want := map[string]map[string]workloadauth.Access{
-		auditv1.AuditService_QueryAuditLog_FullMethodName:      {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_ExportAuditSegment_FullMethodName: {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_VerifyAuditChain_FullMethodName:   {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_ShredSubject_FullMethodName:       {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_CreateLegalHold_FullMethodName:    {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_ListLegalHolds_FullMethodName:     {CallerGateway: workloadauth.OnBehalf},
-		auditv1.AuditService_ReleaseLegalHold_FullMethodName:   {CallerGateway: workloadauth.OnBehalf},
+	want := map[string]map[string]workloadidentity.Access{
+		auditv1.AuditService_QueryAuditLog_FullMethodName:      {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_ExportAuditSegment_FullMethodName: {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_VerifyAuditChain_FullMethodName:   {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_ShredSubject_FullMethodName:       {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_CreateLegalHold_FullMethodName:    {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_ListLegalHolds_FullMethodName:     {CallerGateway: workloadidentity.OnBehalf},
+		auditv1.AuditService_ReleaseLegalHold_FullMethodName:   {CallerGateway: workloadidentity.OnBehalf},
 	}
-	got := map[string]map[string]workloadauth.Access{}
+	got := map[string]map[string]workloadidentity.Access{}
 	for m, callers := range p {
 		if len(callers) > 0 {
 			got[m] = callers
