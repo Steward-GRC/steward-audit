@@ -25,6 +25,7 @@ import (
 	pgotel "github.com/Bugs5382/go-postgres/otel"
 	"github.com/Bugs5382/go-rabbitmq"
 	rmqotel "github.com/Bugs5382/go-rabbitmq/otel"
+	workloadidentity "github.com/Bugs5382/go-workload-identity"
 	"google.golang.org/grpc"
 
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
@@ -37,7 +38,6 @@ import (
 	"github.com/Steward-GRC/steward-audit/internal/server"
 	"github.com/Steward-GRC/steward-audit/internal/shred"
 	"github.com/Steward-GRC/steward-audit/internal/store"
-	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
 )
 
 const serviceName = "audit"
@@ -115,14 +115,14 @@ func run(ctx context.Context, logger log.Logger) error {
 	deps := readiness.Deps{Postgres: readiness.PostgresDB(db), Broker: conn}
 	var auth *server.Auth
 	if cfg.WorkloadAuthEnabled {
-		v, err := workloadauth.NewVerifier(cfg.WorkloadAuth, logger)
+		v, err := workloadidentity.NewVerifier(cfg.WorkloadAuth, logger)
 		if err != nil {
 			return fmt.Errorf("workload auth: %w", err)
 		}
 		go v.Run(ctx)
 		deps.JWKS = readiness.RecheckEvery(v.Refresh, jwksRecheck, time.Now)
-		auth = &server.Auth{Verifier: v, Policy: server.CallerPolicy(), Options: []workloadauth.Option{
-			workloadauth.WithDenyHook(server.AuditDenial(records, logger)),
+		auth = &server.Auth{Verifier: v, Policy: server.CallerPolicy(), Options: []workloadidentity.Option{
+			workloadidentity.WithDenyHook(server.AuditDenial(records, logger)),
 		}}
 		logger.Info("service-to-service authentication on",
 			log.F("issuer", cfg.WorkloadAuth.Issuer), log.F("audience", cfg.WorkloadAuth.Audience),
@@ -131,7 +131,7 @@ func run(ctx context.Context, logger log.Logger) error {
 			log.F("allowed_serviceaccounts", strings.Join(cfg.WorkloadAuth.AllowedServiceAccounts, ",")))
 	} else {
 		deps.WorkloadAuthDisabled = true
-		go workloadauth.WarnDisabled(ctx, logger, workloadauth.DisabledWarnInterval)
+		go workloadidentity.WarnDisabled(ctx, logger, workloadidentity.DisabledWarnInterval)
 	}
 	checker, err := readiness.New(deps, health.WithTTL(5*time.Second), health.WithTimeout(2*time.Second), health.WithLogger(logger))
 	if err != nil {

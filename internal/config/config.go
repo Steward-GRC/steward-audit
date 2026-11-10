@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Steward-GRC/steward-audit/internal/workloadauth"
+	workloadidentity "github.com/Bugs5382/go-workload-identity"
 )
 
 // Config is every setting the service runs with.
@@ -28,7 +28,7 @@ type Config struct {
 	// WorkloadAuth verifies the callers' workload tokens. It is set when
 	// WorkloadAuthEnabled; WORKLOAD_AUTH=disabled is the only way to turn it
 	// off.
-	WorkloadAuth        workloadauth.Config
+	WorkloadAuth        workloadidentity.Config
 	WorkloadAuthEnabled bool
 
 	// TSAURL is the RFC 3161 time-stamp authority. Empty turns checkpoint
@@ -72,7 +72,7 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 	var err error
-	if c.WorkloadAuth, c.WorkloadAuthEnabled, err = workloadauth.ServerConfigFromEnv(getenv); err != nil {
+	if c.WorkloadAuth, c.WorkloadAuthEnabled, err = serverWorkloadConfig(getenv); err != nil {
 		errs = append(errs, err)
 	}
 	if c.CheckpointInterval, err = time.ParseDuration(or("AUDIT_CHECKPOINT_INTERVAL", "15m")); err != nil || c.CheckpointInterval <= 0 {
