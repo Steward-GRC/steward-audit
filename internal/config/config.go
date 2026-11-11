@@ -54,7 +54,7 @@ func Load(getenv func(string) string) (Config, error) {
 		RabbitURL:     getenv("RABBITMQ_URL"),
 		GRPCPort:      or("GRPC_PORT", "9090"),
 		ProbePort:     or("PROBE_PORT", "8080"),
-		OTLPEndpoint:  or("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
+		OTLPEndpoint:  getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 		TSAURL:        getenv("AUDIT_TSA_URL"),
 	}
 	c.MigrateDSN = or("MIGRATE_DSN", c.DatabaseDSN)

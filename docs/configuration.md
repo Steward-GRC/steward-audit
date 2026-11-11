@@ -19,7 +19,7 @@ value that doesn't parse stops the service with every problem listed; nothing fa
 | `WORKLOAD_OIDC_BEARER_FILE` | none | Token sent on the discovery and key set fetch, re-read each time (a second projected token with the API server's default audience). |
 | `WORKLOAD_AUDIENCE` | `steward` | The audience every caller token must carry. |
 | `WORKLOAD_ALLOWED_SERVICEACCOUNTS` | required unless disabled | Comma list of `<namespace>/<serviceaccount>` that may call at all; for audit, `<ns>/steward-gateway`. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | The OTLP collector for traces and metrics. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | empty | The OTLP collector for traces and metrics. Unset or empty turns tracing off. |
 | `AUDIT_TSA_URL` | empty | The RFC 3161 time-stamp authority (`http` or `https`). Empty turns checkpoint anchoring off. |
 | `AUDIT_CHECKPOINT_INTERVAL` | `15m` | How often a checkpoint is made. |
 | `AUDIT_CHECKPOINT_BATCH_SIZE` | `10000` | The most records one checkpoint covers. A backlog drains one batch per interval. |
