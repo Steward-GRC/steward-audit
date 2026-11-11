@@ -22,6 +22,9 @@ service AuditService {
   // ListRecentEvents returns records that occurred at or after a time, for a
   // polling tail.
   rpc ListRecentEvents(ListRecentEventsRequest) returns (ListRecentEventsResponse);
+  // ListAuditActions returns the distinct action codes the log holds, sorted,
+  // for a filter dropdown. Any authenticated requester may call it.
+  rpc ListAuditActions(ListAuditActionsRequest) returns (ListAuditActionsResponse);
   // ShredSubject crypto-shreds a subject: its key is destroyed and its
   // personal data cleared from activity records. Needs compliance.manage; the
   // shred is itself recorded as "subject.shredded".
@@ -153,6 +156,22 @@ message QueryAuditLogRequest {
   RequesterIdentity requester = 7;
   // Only records about this policy version number; 0 means any.
   int32 version_number = 8;
+  // Only records whose action is one of these codes; empty means any.
+  repeated string actions = 9;
+  // Only records whose subject kind, the part before the colon ("policy" in
+  // "policy:POL-000001"), is this; empty means any. It combines with subject.
+  string subject_type = 10;
+  // Only records made by one of these users. This is how an actor group is
+  // filtered: the caller resolves the group's members through steward-identity
+  // and sends their ids, because audit calls no other service. Unset means
+  // any actor; set but empty matches nothing, so a group with no members
+  // returns no records. It combines with actor_user_id.
+  UserIdSet actor_users = 11;
+}
+
+// UserIdSet is a list of user ids whose being unset differs from being empty.
+message UserIdSet {
+  repeated string user_ids = 1;
 }
 
 message QueryAuditLogResponse {
@@ -200,6 +219,16 @@ message ListRecentEventsRequest {
 
 message ListRecentEventsResponse {
   repeated AuditRecord records = 1;
+}
+
+message ListAuditActionsRequest {
+  RequesterIdentity requester = 1;
+}
+
+message ListAuditActionsResponse {
+  // The distinct actions of the records still readable, sorted. Labels are the
+  // caller's: audit holds codes only.
+  repeated string actions = 1;
 }
 
 message ShredSubjectRequest {

@@ -61,7 +61,8 @@ audit scope.
 
 | RPC | Who may call | What it does |
 | --- | --- | --- |
-| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages or a category those groups own, named in `group_id` | A page of records, filtered by tier, group, actor, subject and `version_number` (0 means any version). `next_page_token` is set when the page is full. Not audited. |
+| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages or a category those groups own, named in `group_id` | A page of records, filtered by tier, group, actor, exact subject, `version_number` (0 means any version), `actions` (any of several codes), `subject_type` (the part of the subject before the colon) and `actor_users` (any of a set of users). The filters combine and page together. `actor_users` is how the gateway filters by an actor group: it resolves the group's members through steward-identity and sends their ids (audit calls no other service). Unset means any actor; set but empty matches nothing. `next_page_token` is set when the page is full. Not audited. |
+| `ListAuditActions` | any authenticated requester | The distinct action codes the log holds, sorted, for a filter dropdown. Codes only; labels belong to the caller. Not audited. |
 | `ExportAuditSegment` | `audit.read` | A record id range and the checkpoints wholly inside it, for offline verification. Each export is recorded as `audit_log.exported`. |
 | `VerifyAuditChain` | `audit.read`, or a group manager | Re-walks a record id range and its checkpoints on the server and returns pass or fail with the problems found. |
 | `ListRecentEvents` | `audit.read`; a group manager sees the groups it manages, the categories they own and records with no group | Records that occurred at or after `since_timestamp` (an hour ago when unset), for a polling tail. Not audited. |

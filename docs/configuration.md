@@ -36,7 +36,7 @@ allow-list in code (`internal/server/callers.go`):
 
 | Method | Callers |
 | --- | --- |
-| `QueryAuditLog`, `ExportAuditSegment`, `VerifyAuditChain` | gateway, on behalf of the signed-in user it names in `requester` |
+| `QueryAuditLog`, `ListAuditActions`, `ExportAuditSegment`, `VerifyAuditChain` | gateway, on behalf of the signed-in user it names in `requester` |
 | `ShredSubject`, `CreateLegalHold`, `ListLegalHolds`, `ReleaseLegalHold` | gateway, on behalf of the signed-in user it names in `requester` (who still needs `compliance.manage`) |
 | `ListRecentEvents` | none (the gateway's live tail reads the broker) |
 
