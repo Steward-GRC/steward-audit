@@ -74,6 +74,11 @@ message AuditEvent {
   map<string, string> attributes = 7;
   // Marks a record the law requires to be kept: it is never purged.
   bool legal_basis_exempt = 8;
+  // The number of the policy version the event is about, 1 or more; 0 when it
+  // is about no version. The consumer records it in the event's hashed
+  // attributes as "version_number", so the chain covers it, and any
+  // "version_number" attribute the publisher sent is replaced by it.
+  int32 version_number = 9;
 }
 
 // RequesterIdentity is the caller the gateway authenticated. Every RPC needs
@@ -115,6 +120,9 @@ message AuditRecord {
   // group are empty, and only the link and hash remain. A verifier checks
   // its link and trusts its hash, which the checkpoints still cover.
   bool purged = 12;
+  // The number of the policy version the record is about; 0 when it is about
+  // no version.
+  int32 version_number = 13;
 }
 
 // Checkpoint is a Merkle root over a record range and its RFC 3161 token.
@@ -143,6 +151,8 @@ message QueryAuditLogRequest {
   // The next_page_token of the previous page.
   string page_token = 6;
   RequesterIdentity requester = 7;
+  // Only records about this policy version number; 0 means any.
+  int32 version_number = 8;
 }
 
 message QueryAuditLogResponse {

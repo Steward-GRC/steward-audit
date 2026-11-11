@@ -140,6 +140,24 @@ func TestQueryAuditLogAuditorFullAccess(t *testing.T) {
 	}
 }
 
+// The version filter reaches the store, and a record reports its version.
+func TestQueryAuditLogFiltersByVersionNumber(t *testing.T) {
+	rec := seedRecord(time.Now().UTC())
+	rec.Attributes = map[string]string{store.AttrVersionNumber: "3"}
+	fs := &fakeQueryStore{records: []store.Record{rec}}
+	resp, err := NewAuditServer(fs).QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{
+		Subject: rec.Subject, VersionNumber: 3, Requester: auditor})
+	if err != nil {
+		t.Fatalf("QueryAuditLog: %v", err)
+	}
+	if fs.lastQuery.VersionNumber != 3 {
+		t.Fatalf("store filter version = %d, want 3", fs.lastQuery.VersionNumber)
+	}
+	if len(resp.Records) != 1 || resp.Records[0].VersionNumber != 3 {
+		t.Fatalf("record version: %+v", resp.Records)
+	}
+}
+
 func TestQueryAuditLogSiteAdminFullAccess(t *testing.T) {
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
 	if _, err := NewAuditServer(fs).QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{

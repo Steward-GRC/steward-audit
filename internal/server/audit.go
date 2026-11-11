@@ -113,13 +113,17 @@ func (s *AuditServer) QueryAuditLog(ctx context.Context, req *auditv1.QueryAudit
 		}
 	}
 	limit := pageSize(req.GetPageSize())
+	s.logger.Ctx(ctx).Debug("audit query", log.F("tier", req.GetTier()), log.F("group_id", req.GetGroupId()),
+		log.F("subject", req.GetSubject()), log.F("version_number", req.GetVersionNumber()),
+		log.F("after_id", cursor), log.F("limit", limit))
 	recs, err := s.store.QueryRecords(ctx, store.QueryFilter{
 		Tier: req.GetTier(), GroupID: req.GetGroupId(), ActorUserID: req.GetActorUserId(),
-		Subject: req.GetSubject(), AfterID: cursor, Limit: int(limit),
+		Subject: req.GetSubject(), VersionNumber: req.GetVersionNumber(), AfterID: cursor, Limit: int(limit),
 	})
 	if err != nil {
 		return nil, s.storeError(ctx, "query", err)
 	}
+	s.logger.Ctx(ctx).Debug("audit query done", log.F("records", len(recs)))
 	resp := &auditv1.QueryAuditLogResponse{Records: toProtos(recs)}
 	if len(recs) == int(limit) {
 		resp.NextPageToken = strconv.FormatInt(recs[len(recs)-1].ID, 10)
@@ -254,6 +258,7 @@ func toProtos(recs []store.Record) []*auditv1.AuditRecord {
 			Id: r.ID, RecordUuid: r.RecordUUID, Tier: r.Tier, Action: r.Action, ActorUserId: r.ActorUserID,
 			Subject: r.Subject, GroupId: r.GroupID, OccurredAt: timestamppb.New(r.OccurredAt),
 			PrevHash: r.PrevHash, RecordHash: r.RecordHash, LegalBasisExempt: r.LegalBasisExempt, Purged: r.Purged,
+			VersionNumber: r.VersionNumber(),
 		}
 	}
 	return out

@@ -11,7 +11,9 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"maps"
 	"mime"
+	"strconv"
 
 	"github.com/Bugs5382/go-rabbitmq"
 	"google.golang.org/protobuf/proto"
@@ -87,9 +89,19 @@ func decode(d rabbitmq.Delivery) (store.RecordInput, error) {
 	if err := ev.GetOccurredAt().CheckValid(); err != nil {
 		return store.RecordInput{}, fmt.Errorf("occurred_at: %v", err)
 	}
+	attrs := ev.GetAttributes()
+	if v := ev.GetVersionNumber(); v > 0 {
+		// Copy first: the version joins the hashed attributes, and a
+		// "version_number" the publisher also sent must not outrank the field.
+		attrs = maps.Clone(attrs)
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		attrs[store.AttrVersionNumber] = strconv.FormatInt(int64(v), 10)
+	}
 	return store.RecordInput{
 		Tier: tier, Action: ev.GetAction(), ActorUserID: ev.GetActorUserId(), Subject: ev.GetSubject(),
-		GroupID: ev.GetGroupId(), OccurredAt: ev.GetOccurredAt().AsTime(), Attributes: ev.GetAttributes(),
+		GroupID: ev.GetGroupId(), OccurredAt: ev.GetOccurredAt().AsTime(), Attributes: attrs,
 		LegalBasisExempt: ev.GetLegalBasisExempt(),
 	}, nil
 }

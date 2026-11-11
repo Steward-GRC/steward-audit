@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"time"
 
 	postgres "github.com/Bugs5382/go-postgres"
@@ -17,6 +19,11 @@ import (
 
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 )
+
+// AttrVersionNumber is the attribute that holds the number of the policy
+// version a record is about. It lives in the hashed attributes, so the chain
+// covers it, and the query reads it back with an expression index on it.
+const AttrVersionNumber = "version_number"
 
 // RecordInput is a new record. The store computes PrevHash and RecordHash.
 type RecordInput struct {
@@ -45,6 +52,16 @@ type Record struct {
 	RecordInput
 }
 
+// VersionNumber is the policy version the record is about, or 0 when it is
+// about none or the attribute is not a positive 32-bit number.
+func (r Record) VersionNumber() int32 {
+	n, err := strconv.ParseInt(r.Attributes[AttrVersionNumber], 10, 32)
+	if err != nil || n <= 0 || n > math.MaxInt32 {
+		return 0
+	}
+	return int32(n)
+}
+
 // VerifyRecord is the record as the chain verifier sees it.
 func (r Record) VerifyRecord() chain.VerifyRecord {
 	return chain.VerifyRecord{
@@ -54,15 +71,18 @@ func (r Record) VerifyRecord() chain.VerifyRecord {
 	}
 }
 
-// QueryFilter selects records for a query page. Empty strings don't filter.
-// AfterID is the forward cursor; Limit defaults to 50.
+// QueryFilter selects records for a query page. Empty strings and a zero
+// VersionNumber don't filter. AfterID is the forward cursor; Limit defaults
+// to 50.
 type QueryFilter struct {
 	Tier        string
 	GroupID     string
 	ActorUserID string
 	Subject     string
-	AfterID     int64
-	Limit       int
+	// VersionNumber keeps only the records about that policy version.
+	VersionNumber int32
+	AfterID       int64
+	Limit         int
 }
 
 // RecentFilter selects records that occurred at or after Since. Empty strings
@@ -144,9 +164,10 @@ func (s *RecordStore) QueryRecords(ctx context.Context, q QueryFilter) ([]Record
 		   AND ($2 = '' OR group_id = $2)
 		   AND ($3 = '' OR actor_user_id = $3)
 		   AND ($4 = '' OR subject = $4)
-		   AND id > $5
-		 ORDER BY id LIMIT $6`,
-		q.Tier, q.GroupID, q.ActorUserID, q.Subject, q.AfterID, limitOr(q.Limit))
+		   AND ($5 = '' OR attributes->>'`+AttrVersionNumber+`' = $5)
+		   AND id > $6
+		 ORDER BY id LIMIT $7`,
+		q.Tier, q.GroupID, q.ActorUserID, q.Subject, versionArg(q.VersionNumber), q.AfterID, limitOr(q.Limit))
 }
 
 // ListRecentRecords returns records that occurred at or after f.Since, in id
@@ -247,6 +268,14 @@ func (s *RecordStore) query(ctx context.Context, sql string, args ...any) ([]Rec
 		return nil, fmt.Errorf("store: query records: %w", err)
 	}
 	return out, nil
+}
+
+// versionArg is the version filter as the text the attribute holds, "" for none.
+func versionArg(n int32) string {
+	if n <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(int64(n), 10)
 }
 
 func limitOr(n int) int {

@@ -40,6 +40,7 @@ const (
 const (
 	PolicyPublished = "policy.published"
 	PolicyViewed    = "policy.viewed"
+	PolicySubmitted = "policy.submitted"
 )
 
 // ErinKeyAlias is the personal-data key alias for Erin.

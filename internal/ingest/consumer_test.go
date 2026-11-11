@@ -67,6 +67,36 @@ func TestHandleMessageAuditTier(t *testing.T) {
 	}
 }
 
+// A version event keeps its version number in the hashed attributes, so the
+// chain covers it, and the number the publisher put in the field wins over a
+// "version_number" attribute it also sent. An event about no version gets none.
+func TestHandleMessageRecordsVersionNumber(t *testing.T) {
+	fs := &fakeStore{}
+	h := NewHandler(fs)
+	base := func() *auditv1.AuditEvent {
+		return &auditv1.AuditEvent{Tier: auditv1.Tier_TIER_AUDIT, Action: fixture.PolicySubmitted, ActorUserId: fixture.Bob,
+			Subject: fixture.DeskBookingPolicy, OccurredAt: timestamppb.Now()}
+	}
+	v2 := base()
+	v2.VersionNumber = 2
+	v2.Attributes = map[string]string{"version_number": "9", "note": "kept"}
+	none := base()
+	for _, ev := range []*auditv1.AuditEvent{v2, none} {
+		if err := h.Handle(context.Background(), delivery(t, RoutingKeyAudit, ev)); err != nil {
+			t.Fatalf("Handle: %v", err)
+		}
+	}
+	if got := fs.appended[0].Attributes[store.AttrVersionNumber]; got != "2" {
+		t.Fatalf("version_number attribute = %q, want 2", got)
+	}
+	if fs.appended[0].Attributes["note"] != "kept" {
+		t.Fatalf("other attributes must be kept: %v", fs.appended[0].Attributes)
+	}
+	if _, ok := fs.appended[1].Attributes[store.AttrVersionNumber]; ok {
+		t.Fatalf("an event about no version must not get a version_number: %v", fs.appended[1].Attributes)
+	}
+}
+
 func TestHandleMessageActivityTier(t *testing.T) {
 	fs := &fakeStore{}
 	ev := &auditv1.AuditEvent{Tier: auditv1.Tier_TIER_ACTIVITY, Action: fixture.PolicyViewed, ActorUserId: fixture.Erin, Subject: fixture.TravelProcedure,
