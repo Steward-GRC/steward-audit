@@ -27,7 +27,7 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ProbePort != "8080" || c.WorkloadAuthEnabled {
 		t.Fatalf("probe and workload auth defaults: %+v", c)
 	}
-	if c.GRPCPort != "9090" || c.OTLPEndpoint != "localhost:4317" || c.MigrationsDir != "migrations" || c.MigrateDSN != dsn {
+	if c.GRPCPort != "9090" || c.OTLPEndpoint != "" || c.MigrationsDir != "migrations" || c.MigrateDSN != dsn {
 		t.Fatalf("defaults: %+v", c)
 	}
 	if c.TSAURL != "" || c.CheckpointInterval != 15*time.Minute || c.CheckpointBatchSize != 10_000 {
@@ -130,5 +130,30 @@ func TestLoadPurgeInterval(t *testing.T) {
 	base["AUDIT_PURGE_INTERVAL"] = "6h"
 	if c, err := Load(env(base)); err != nil || c.PurgeInterval != 6*time.Hour {
 		t.Fatalf("purge interval = %v, %v; want 6h", c.PurgeInterval, err)
+	}
+}
+
+// An unset or empty endpoint means tracing is off; go-otel's Init exports
+// nowhere only for an empty endpoint.
+func TestLoadOTLPEndpoint(t *testing.T) {
+	for name, tc := range map[string]struct{ set, want string }{
+		"unset": {},
+		"empty": {set: "", want: ""},
+		"set":   {set: "otel.example.org:4317", want: "otel.example.org:4317"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := base()
+			m["WORKLOAD_AUTH"] = "disabled"
+			if name != "unset" {
+				m["OTEL_EXPORTER_OTLP_ENDPOINT"] = tc.set
+			}
+			c, err := Load(env(m))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if c.OTLPEndpoint != tc.want {
+				t.Fatalf("OTLPEndpoint = %q, want %q", c.OTLPEndpoint, tc.want)
+			}
+		})
 	}
 }
