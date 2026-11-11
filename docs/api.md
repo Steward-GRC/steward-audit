@@ -30,6 +30,7 @@ routing keys:
 | `occurred_at` | yes | when it happened, stamped by the publisher |
 | `attributes` | no | extra detail, string to string |
 | `legal_basis_exempt` | no | the record is never purged |
+| `version_number` | no | the policy version the event is about, 1 or more; stored as the hashed `version_number` attribute, replacing one the publisher sent, and returned on the record |
 
 Attributes are hashed into the chain but never returned by the API, so don't put anything in them a
 reader of the raw export shouldn't see.
@@ -60,7 +61,7 @@ audit scope.
 
 | RPC | Who may call | What it does |
 | --- | --- | --- |
-| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages or a category those groups own, named in `group_id` | A page of records, filtered by tier, group, actor and subject. `next_page_token` is set when the page is full. Not audited. |
+| `QueryAuditLog` | `audit.read`: any group. A group manager: only a group it manages or a category those groups own, named in `group_id` | A page of records, filtered by tier, group, actor, subject and `version_number` (0 means any version). `next_page_token` is set when the page is full. Not audited. |
 | `ExportAuditSegment` | `audit.read` | A record id range and the checkpoints wholly inside it, for offline verification. Each export is recorded as `audit_log.exported`. |
 | `VerifyAuditChain` | `audit.read`, or a group manager | Re-walks a record id range and its checkpoints on the server and returns pass or fail with the problems found. |
 | `ListRecentEvents` | `audit.read`; a group manager sees the groups it manages, the categories they own and records with no group | Records that occurred at or after `since_timestamp` (an hour ago when unset), for a polling tail. Not audited. |

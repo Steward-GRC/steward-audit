@@ -414,3 +414,47 @@ func TestTombstonePIIScopesToActivityTier(t *testing.T) {
 		t.Fatalf("tombstoning broke the chain: %v", report.Errors)
 	}
 }
+
+// Two versions of one policy each have their own submit event; the query asks
+// for one version's events, and the record reports the number it is about.
+func TestQueryRecordsFiltersByVersionNumber(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	submit := func(version string) RecordInput {
+		in := RecordInput{Tier: "audit", Action: fixture.PolicySubmitted, ActorUserID: fixture.Bob,
+			Subject: fixture.DeskBookingPolicy, GroupID: fixture.FacilitiesTeam, OccurredAt: time.Now().UTC()}
+		if version != "" {
+			in.Attributes = map[string]string{AttrVersionNumber: version}
+		}
+		return in
+	}
+	for _, in := range []RecordInput{submit("1"), submit("2"), submit(""), submit("2")} {
+		if _, err := rs.AppendRecord(ctx, in); err != nil {
+			t.Fatalf("AppendRecord: %v", err)
+		}
+	}
+	got, err := rs.QueryRecords(ctx, QueryFilter{Subject: fixture.DeskBookingPolicy, VersionNumber: 2})
+	if err != nil || len(got) != 2 || got[0].ID != 2 || got[1].ID != 4 {
+		t.Fatalf("version 2: %+v, %v", got, err)
+	}
+	if got[0].VersionNumber() != 2 {
+		t.Fatalf("VersionNumber() = %d, want 2", got[0].VersionNumber())
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{Subject: fixture.DeskBookingPolicy, VersionNumber: 1})
+	if len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("version 1: %+v", got)
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{Subject: fixture.DeskBookingPolicy})
+	if len(got) != 4 || got[2].VersionNumber() != 0 {
+		t.Fatalf("no version filter must return every record, an unversioned one reporting 0: %+v", got)
+	}
+}
+
+func TestRecordVersionNumberIgnoresBadAttribute(t *testing.T) {
+	for _, v := range []string{"", "x", "-3", "0", "99999999999"} {
+		r := Record{RecordInput: RecordInput{Attributes: map[string]string{AttrVersionNumber: v}}}
+		if got := r.VersionNumber(); got != 0 {
+			t.Errorf("attribute %q: VersionNumber() = %d, want 0", v, got)
+		}
+	}
+}
