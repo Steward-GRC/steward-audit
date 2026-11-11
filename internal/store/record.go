@@ -71,9 +71,9 @@ func (r Record) VerifyRecord() chain.VerifyRecord {
 	}
 }
 
-// QueryFilter selects records for a query page. Empty strings and a zero
-// VersionNumber don't filter. AfterID is the forward cursor; Limit defaults
-// to 50.
+// QueryFilter selects records for a query page. Empty strings, empty lists and
+// a zero VersionNumber don't filter. AfterID is the forward cursor; Limit
+// defaults to 50.
 type QueryFilter struct {
 	Tier        string
 	GroupID     string
@@ -81,8 +81,17 @@ type QueryFilter struct {
 	Subject     string
 	// VersionNumber keeps only the records about that policy version.
 	VersionNumber int32
-	AfterID       int64
-	Limit         int
+	// Actions keeps the records whose action is any of these.
+	Actions []string
+	// SubjectType keeps the records whose subject kind, the part before the
+	// first colon, is this; a subject with no colon has no kind.
+	SubjectType string
+	// ActorUsers keeps the records made by any of these users. Unlike the
+	// other lists, nil and empty differ: nil does not filter, and an empty
+	// slice matches nothing.
+	ActorUsers []string
+	AfterID    int64
+	Limit      int
 }
 
 // RecentFilter selects records that occurred at or after Since. Empty strings
@@ -165,9 +174,35 @@ func (s *RecordStore) QueryRecords(ctx context.Context, q QueryFilter) ([]Record
 		   AND ($3 = '' OR actor_user_id = $3)
 		   AND ($4 = '' OR subject = $4)
 		   AND ($5 = '' OR attributes->>'`+AttrVersionNumber+`' = $5)
-		   AND id > $6
-		 ORDER BY id LIMIT $7`,
-		q.Tier, q.GroupID, q.ActorUserID, q.Subject, versionArg(q.VersionNumber), q.AfterID, limitOr(q.Limit))
+		   AND (cardinality($6::text[]) = 0 OR action = ANY($6))
+		   AND ($7 = '' OR starts_with(subject, $7 || ':'))
+		   AND ($8::text[] IS NULL OR actor_user_id = ANY($8))
+		   AND id > $9
+		 ORDER BY id LIMIT $10`,
+		q.Tier, q.GroupID, q.ActorUserID, q.Subject, versionArg(q.VersionNumber), nonNil(q.Actions), q.SubjectType, q.ActorUsers, q.AfterID, limitOr(q.Limit))
+}
+
+// ListActions returns the distinct actions of the records that are not
+// tombstones, sorted.
+func (s *RecordStore) ListActions(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Querier().Query(ctx,
+		`SELECT DISTINCT action FROM audit_records WHERE purged_at IS NULL ORDER BY action`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list actions: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, fmt.Errorf("store: scan action: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list actions: %w", err)
+	}
+	return out, nil
 }
 
 // ListRecentRecords returns records that occurred at or after f.Since, in id
@@ -276,6 +311,14 @@ func versionArg(n int32) string {
 		return ""
 	}
 	return strconv.FormatInt(int64(n), 10)
+}
+
+// nonNil is s, or an empty slice for nil: a nil slice reaches Postgres as NULL.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func limitOr(n int) int {

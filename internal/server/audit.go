@@ -32,6 +32,7 @@ type QueryStore interface {
 	CheckpointsInRange(ctx context.Context, fromID, toID int64) ([]store.Checkpoint, error)
 	AppendRecord(ctx context.Context, in store.RecordInput) (*store.Record, error)
 	ListRecentRecords(ctx context.Context, f store.RecentFilter) ([]store.Record, error)
+	ListActions(ctx context.Context) ([]string, error)
 }
 
 // AuditServer implements auditv1.AuditServiceServer. Identity comes from the
@@ -113,12 +114,20 @@ func (s *AuditServer) QueryAuditLog(ctx context.Context, req *auditv1.QueryAudit
 		}
 	}
 	limit := pageSize(req.GetPageSize())
+	// An unset actor_users stays nil (any actor); a set one, even empty, is
+	// non-nil and an empty one matches no actor.
+	var actorUsers []string
+	if set := req.GetActorUsers(); set != nil {
+		actorUsers = append([]string{}, set.GetUserIds()...)
+	}
 	s.logger.Ctx(ctx).Debug("audit query", log.F("tier", req.GetTier()), log.F("group_id", req.GetGroupId()),
-		log.F("subject", req.GetSubject()), log.F("version_number", req.GetVersionNumber()),
-		log.F("after_id", cursor), log.F("limit", limit))
+		log.F("subject", req.GetSubject()), log.F("version_number", req.GetVersionNumber()), log.F("subject_type", req.GetSubjectType()),
+		log.F("actions", len(req.GetActions())), log.F("actor_users", len(actorUsers)),
+		log.F("actor_users_set", actorUsers != nil), log.F("after_id", cursor), log.F("limit", limit))
 	recs, err := s.store.QueryRecords(ctx, store.QueryFilter{
 		Tier: req.GetTier(), GroupID: req.GetGroupId(), ActorUserID: req.GetActorUserId(),
-		Subject: req.GetSubject(), VersionNumber: req.GetVersionNumber(), AfterID: cursor, Limit: int(limit),
+		Subject: req.GetSubject(), VersionNumber: req.GetVersionNumber(), Actions: req.GetActions(), SubjectType: req.GetSubjectType(),
+		ActorUsers: actorUsers, AfterID: cursor, Limit: int(limit),
 	})
 	if err != nil {
 		return nil, s.storeError(ctx, "query", err)
@@ -242,6 +251,21 @@ func (s *AuditServer) ListRecentEvents(ctx context.Context, req *auditv1.ListRec
 		recs = slices.DeleteFunc(recs, func(r store.Record) bool { return r.GroupID != "" && !who.manages(r.GroupID) })
 	}
 	return &auditv1.ListRecentEventsResponse{Records: toProtos(recs)}, nil
+}
+
+// ListAuditActions returns the distinct action codes the log holds, for a
+// filter dropdown. Any authenticated requester may ask: it returns codes only,
+// never a record.
+func (s *AuditServer) ListAuditActions(ctx context.Context, req *auditv1.ListAuditActionsRequest) (*auditv1.ListAuditActionsResponse, error) {
+	if _, err := callerFrom(req.GetRequester()); err != nil {
+		return nil, auditerr.Error(ctx, err)
+	}
+	actions, err := s.store.ListActions(ctx)
+	if err != nil {
+		return nil, s.storeError(ctx, "list_actions", err)
+	}
+	s.logger.Ctx(ctx).Debug("audit actions listed", log.F("actions", len(actions)))
+	return &auditv1.ListAuditActionsResponse{Actions: actions}, nil
 }
 
 func (s *AuditServer) storeError(ctx context.Context, op string, cause error) error {

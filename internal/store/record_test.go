@@ -458,3 +458,148 @@ func TestRecordVersionNumberIgnoresBadAttribute(t *testing.T) {
 		}
 	}
 }
+
+func appendAll(t *testing.T, rs *RecordStore, ins ...RecordInput) {
+	t.Helper()
+	for _, in := range ins {
+		if _, err := rs.AppendRecord(context.Background(), in); err != nil {
+			t.Fatalf("AppendRecord: %v", err)
+		}
+	}
+}
+
+func event(action, actor, subject string) RecordInput {
+	return RecordInput{Tier: "audit", Action: action, ActorUserID: actor, Subject: subject, OccurredAt: time.Now().UTC()}
+}
+
+func idsOf(recs []Record) []int64 {
+	out := make([]int64, len(recs))
+	for i, r := range recs {
+		out[i] = r.ID
+	}
+	return out
+}
+
+func sameIDs(got []Record, want ...int64) bool {
+	g := idsOf(got)
+	if len(g) != len(want) {
+		return false
+	}
+	for i := range g {
+		if g[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestQueryRecordsFiltersByActions(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	appendAll(t, rs,
+		event(fixture.PolicyPublished, fixture.Bob, fixture.DeskBookingPolicy),
+		event(fixture.PolicySubmitted, fixture.Bob, fixture.DeskBookingPolicy),
+		event(fixture.PolicyViewed, fixture.Erin, fixture.DeskBookingPolicy))
+	got, err := rs.QueryRecords(ctx, QueryFilter{Actions: []string{fixture.PolicyPublished, fixture.PolicyViewed}})
+	if err != nil || !sameIDs(got, 1, 3) {
+		t.Fatalf("two actions: %v, %v", idsOf(got), err)
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{Actions: []string{"policy.unknown"}})
+	if len(got) != 0 {
+		t.Fatalf("unknown action: %v", idsOf(got))
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{})
+	if len(got) != 3 {
+		t.Fatalf("no actions must not filter: %v", idsOf(got))
+	}
+}
+
+func TestQueryRecordsFiltersBySubjectType(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	appendAll(t, rs,
+		event(fixture.PolicyPublished, fixture.Bob, fixture.DeskBookingPolicy),
+		event("user.created", fixture.Alice, fixture.UserErin),
+		event("system.started", "", ""),
+		event("policy_version.submitted", fixture.Bob, "policy_version:PV-1"),
+		event("policy.noted", fixture.Bob, "policy"))
+	got, err := rs.QueryRecords(ctx, QueryFilter{SubjectType: "policy"})
+	if err != nil || !sameIDs(got, 1) {
+		t.Fatalf("policy: %v, %v (a longer kind or a subject with no colon must not match)", idsOf(got), err)
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{SubjectType: "user"})
+	if !sameIDs(got, 2) {
+		t.Fatalf("user: %v", idsOf(got))
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{SubjectType: "policy_version"})
+	if !sameIDs(got, 4) {
+		t.Fatalf("policy_version: %v", idsOf(got))
+	}
+}
+
+func TestQueryRecordsFiltersByActorUsers(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	appendAll(t, rs,
+		event(fixture.PolicyPublished, fixture.Bob, fixture.DeskBookingPolicy),
+		event(fixture.PolicyViewed, fixture.Erin, fixture.DeskBookingPolicy),
+		event(fixture.PolicyPublished, fixture.Carol, fixture.TravelProcedure),
+		event("system.started", "", ""))
+	got, err := rs.QueryRecords(ctx, QueryFilter{ActorUsers: []string{fixture.Bob, fixture.Carol}})
+	if err != nil || !sameIDs(got, 1, 3) {
+		t.Fatalf("two users: %v, %v", idsOf(got), err)
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{ActorUsers: []string{}})
+	if len(got) != 0 {
+		t.Fatalf("an empty set matches nothing: %v", idsOf(got))
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{})
+	if len(got) != 4 {
+		t.Fatalf("an unset set matches everything: %v", idsOf(got))
+	}
+	got, _ = rs.QueryRecords(ctx, QueryFilter{ActorUsers: []string{fixture.Bob, fixture.Erin}, ActorUserID: fixture.Erin})
+	if !sameIDs(got, 2) {
+		t.Fatalf("actor_user_id narrows the set: %v", idsOf(got))
+	}
+}
+
+// The filters combine and page: the cursor walks the matching records only.
+func TestQueryRecordsCombinesFiltersAndPages(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	appendAll(t, rs,
+		event(fixture.PolicyPublished, fixture.Bob, fixture.DeskBookingPolicy),
+		event(fixture.PolicyPublished, fixture.Erin, fixture.DeskBookingPolicy),
+		event(fixture.PolicyPublished, fixture.Bob, fixture.UserBob),
+		event(fixture.PolicySubmitted, fixture.Bob, fixture.ExpenseClaimsPolicy),
+		event(fixture.PolicyPublished, fixture.Bob, fixture.TravelProcedure),
+		event(fixture.PolicyPublished, fixture.Bob, fixture.ExpenseClaimsPolicy))
+	f := QueryFilter{Actions: []string{fixture.PolicyPublished, fixture.PolicySubmitted}, SubjectType: "policy",
+		ActorUsers: []string{fixture.Bob}, Limit: 2}
+	page1, err := rs.QueryRecords(ctx, f)
+	if err != nil || !sameIDs(page1, 1, 4) {
+		t.Fatalf("page 1: %v, %v", idsOf(page1), err)
+	}
+	f.AfterID = page1[len(page1)-1].ID
+	page2, _ := rs.QueryRecords(ctx, f)
+	if !sameIDs(page2, 5, 6) {
+		t.Fatalf("page 2: %v", idsOf(page2))
+	}
+}
+
+func TestListActionsReturnsTheDistinctCodesSorted(t *testing.T) {
+	ctx := context.Background()
+	rs := NewRecordStore(newTestDB(t))
+	got, err := rs.ListActions(ctx)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty log: %v, %v", got, err)
+	}
+	appendAll(t, rs,
+		event(fixture.PolicyViewed, fixture.Erin, fixture.DeskBookingPolicy),
+		event(fixture.PolicyPublished, fixture.Bob, fixture.DeskBookingPolicy),
+		event(fixture.PolicyViewed, fixture.Erin, fixture.TravelProcedure))
+	got, err = rs.ListActions(ctx)
+	if err != nil || len(got) != 2 || got[0] != fixture.PolicyPublished || got[1] != fixture.PolicyViewed {
+		t.Fatalf("actions: %v, %v", got, err)
+	}
+}

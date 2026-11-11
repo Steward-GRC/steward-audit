@@ -48,7 +48,12 @@ type fakeQueryStore struct {
 	appended      []store.RecordInput
 	lastRecent    store.RecentFilter
 	lastQuery     store.QueryFilter
+	actions       []string
 	err           error
+}
+
+func (f *fakeQueryStore) ListActions(context.Context) ([]string, error) {
+	return f.actions, f.err
 }
 
 func (f *fakeQueryStore) QueryRecords(_ context.Context, q store.QueryFilter) ([]store.Record, error) {
@@ -548,5 +553,61 @@ func TestManagedCategoriesAloneDoNotGrantExport(t *testing.T) {
 		&auditv1.ExportAuditSegmentRequest{FromRecordId: 1, ToRecordId: 1, Requester: categoryManager()})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("export err=%v, want PermissionDenied", err)
+	}
+}
+
+// The new filters reach the store as sent; an unset actor_users stays unset
+// (any actor) while a set, empty one stays empty (no actor matches).
+func TestQueryAuditLogPassesTheFilters(t *testing.T) {
+	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
+	svc := NewAuditServer(fs)
+	_, err := svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{
+		Actions: []string{fixture.PolicyPublished, fixture.PolicySubmitted}, SubjectType: "policy",
+		ActorUsers: &auditv1.UserIdSet{UserIds: []string{fixture.Bob, fixture.Carol}}, Requester: auditor})
+	if err != nil {
+		t.Fatalf("QueryAuditLog: %v", err)
+	}
+	q := fs.lastQuery
+	if len(q.Actions) != 2 || q.Actions[1] != fixture.PolicySubmitted || q.SubjectType != "policy" ||
+		len(q.ActorUsers) != 2 || q.ActorUsers[0] != fixture.Bob {
+		t.Fatalf("filters not passed: %+v", q)
+	}
+
+	if _, err = svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{Requester: auditor}); err != nil {
+		t.Fatalf("QueryAuditLog: %v", err)
+	}
+	if fs.lastQuery.ActorUsers != nil {
+		t.Fatalf("an unset actor_users must not filter: %#v", fs.lastQuery.ActorUsers)
+	}
+
+	if _, err = svc.QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{
+		ActorUsers: &auditv1.UserIdSet{}, Requester: auditor}); err != nil {
+		t.Fatalf("QueryAuditLog: %v", err)
+	}
+	if fs.lastQuery.ActorUsers == nil || len(fs.lastQuery.ActorUsers) != 0 {
+		t.Fatalf("an empty actor_users must stay empty, not nil: %#v", fs.lastQuery.ActorUsers)
+	}
+}
+
+func TestListAuditActions(t *testing.T) {
+	fs := &fakeQueryStore{actions: []string{fixture.PolicyPublished, fixture.PolicyViewed}}
+	svc := NewAuditServer(fs)
+	resp, err := svc.ListAuditActions(context.Background(), &auditv1.ListAuditActionsRequest{Requester: plainReader})
+	if err != nil {
+		t.Fatalf("ListAuditActions: %v", err)
+	}
+	if len(resp.Actions) != 2 || resp.Actions[0] != fixture.PolicyPublished {
+		t.Fatalf("actions: %v", resp.Actions)
+	}
+
+	_, err = svc.ListAuditActions(context.Background(), &auditv1.ListAuditActionsRequest{})
+	if status.Code(err) != codes.Unauthenticated || symbolOf(err) != "AUDIT_UNAUTHENTICATED" {
+		t.Fatalf("no requester: %v", err)
+	}
+
+	fs.err = errors.New("db down")
+	_, err = svc.ListAuditActions(context.Background(), &auditv1.ListAuditActionsRequest{Requester: auditor})
+	if symbolOf(err) != "AUDIT_STORE_UNAVAILABLE" {
+		t.Fatalf("store failure must be coded: %v", err)
 	}
 }
