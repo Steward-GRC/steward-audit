@@ -51,7 +51,7 @@ Every request carries a `RequesterIdentity` (user id, roles, groups, managed gro
 categories) that the gateway fills from the session it authenticated; an empty user id is refused
 with `AUDIT_UNAUTHENTICATED`.
 
-Access follows the steward-authz permission catalog. `roles` are catalog role names: a role that
+Access follows the Steward permission catalog (embedded at internal/authz/catalog.json). `roles` are catalog role names: a role that
 holds `audit.read` (`compliance-admin` and `site-admin` today) reads every group. A caller without
 it reads only the groups listed in `managed_groups` (the groups it manages) and the categories
 listed in `managed_categories` (the core categories those groups own; core and workflow records

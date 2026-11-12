@@ -16,10 +16,9 @@ import (
 	log "github.com/Bugs5382/go-log"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	stewardauthz "github.com/Steward-GRC/steward-authz"
-
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
 	"github.com/Steward-GRC/steward-audit/internal/auditerr"
+	"github.com/Steward-GRC/steward-audit/internal/authz"
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 	"github.com/Steward-GRC/steward-audit/internal/store"
 )
@@ -73,16 +72,16 @@ func callerFrom(r *auditv1.RequesterIdentity) (caller, error) {
 	if r.GetUserId() == "" {
 		return caller{}, auditerr.Unauthenticated()
 	}
-	subject := stewardauthz.Subject{UserID: r.GetUserId()}
+	subject := authz.Subject{UserID: r.GetUserId()}
 	for _, name := range r.GetRoles() {
-		if role, err := stewardauthz.ParseRole(name); err == nil {
+		if role, err := authz.ParseRole(name); err == nil {
 			subject.Roles = append(subject.Roles, role)
 		}
 	}
 	return caller{
 		userID:           r.GetUserId(),
-		readsAll:         stewardauthz.HasCapability(subject, stewardauthz.AuditRead),
-		managesRetention: stewardauthz.HasCapability(subject, stewardauthz.ComplianceManage),
+		readsAll:         authz.HasCapability(subject, authz.AuditRead),
+		managesRetention: authz.HasCapability(subject, authz.ComplianceManage),
 		managed:          r.GetManagedGroups(),
 		categories:       r.GetManagedCategories(),
 	}, nil

@@ -13,9 +13,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	stewardauthz "github.com/Steward-GRC/steward-authz"
-
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
+	"github.com/Steward-GRC/steward-audit/internal/authz"
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 	"github.com/Steward-GRC/steward-audit/internal/fixture"
 	"github.com/Steward-GRC/steward-audit/internal/shred"
@@ -76,11 +75,11 @@ func adminServer() (*AuditServer, *fakeQueryStore, *fakeHolds, *fakeShredder) {
 	return NewAuditServer(fs).WithRetention(holds).WithShredder(sh), fs, holds, sh
 }
 
-var complianceAdmin = requester(fixture.Grace, string(stewardauthz.RoleComplianceAdmin), "")
+var complianceAdmin = requester(fixture.Grace, string(authz.RoleComplianceAdmin), "")
 
 func TestAdminRPCsNeedComplianceManage(t *testing.T) {
 	for _, who := range []*auditv1.RequesterIdentity{
-		plainReader, groupManager, requester(fixture.Erin, string(stewardauthz.RoleTemplateAdmin), ""),
+		plainReader, groupManager, requester(fixture.Erin, string(authz.RoleTemplateAdmin), ""),
 		requester(fixture.Erin, "compliance_officer", ""),
 	} {
 		svc, fs, holds, sh := adminServer()

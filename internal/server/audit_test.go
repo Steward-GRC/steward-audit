@@ -16,9 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	stewardauthz "github.com/Steward-GRC/steward-authz"
-
 	auditv1 "github.com/Steward-GRC/steward-audit/gen/go/steward/audit/v1"
+	"github.com/Steward-GRC/steward-audit/internal/authz"
 	"github.com/Steward-GRC/steward-audit/internal/chain"
 	"github.com/Steward-GRC/steward-audit/internal/fixture"
 	"github.com/Steward-GRC/steward-audit/internal/store"
@@ -36,7 +35,7 @@ func requester(userID, role, managedGroup string) *auditv1.RequesterIdentity {
 }
 
 var (
-	auditor      = requester(fixture.Grace, string(stewardauthz.RoleComplianceAdmin), "")
+	auditor      = requester(fixture.Grace, string(authz.RoleComplianceAdmin), "")
 	groupManager = requester(fixture.Heidi, "", fixture.FacilitiesTeam)
 	plainReader  = requester(fixture.Erin, "", "")
 )
@@ -166,7 +165,7 @@ func TestQueryAuditLogFiltersByVersionNumber(t *testing.T) {
 func TestQueryAuditLogSiteAdminFullAccess(t *testing.T) {
 	fs := &fakeQueryStore{records: []store.Record{seedRecord(time.Now().UTC())}}
 	if _, err := NewAuditServer(fs).QueryAuditLog(context.Background(), &auditv1.QueryAuditLogRequest{
-		Requester: requester(fixture.Grace, string(stewardauthz.RoleSiteAdmin), "")}); err != nil {
+		Requester: requester(fixture.Grace, string(authz.RoleSiteAdmin), "")}); err != nil {
 		t.Fatalf("QueryAuditLog: %v", err)
 	}
 }
@@ -201,8 +200,8 @@ func TestRolesWithoutAuditReadAreRefused(t *testing.T) {
 }
 
 func TestRolesWithAuditReadReadEveryGroup(t *testing.T) {
-	for _, role := range []stewardauthz.Role{stewardauthz.RoleComplianceAdmin, stewardauthz.RoleSiteAdmin} {
-		if !stewardauthz.HasCapability(stewardauthz.Subject{Roles: []stewardauthz.Role{role}}, stewardauthz.AuditRead) {
+	for _, role := range []authz.Role{authz.RoleComplianceAdmin, authz.RoleSiteAdmin} {
+		if !authz.HasCapability(authz.Subject{Roles: []authz.Role{role}}, authz.AuditRead) {
 			t.Fatalf("catalog: %s should hold audit.read", role)
 		}
 		who := requester(fixture.Grace, string(role), "")
