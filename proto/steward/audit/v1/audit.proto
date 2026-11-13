@@ -88,7 +88,7 @@ message AuditEvent {
 // it; an empty user_id is refused as unauthenticated.
 message RequesterIdentity {
   string user_id = 1;
-  // The caller's global roles, as steward-authz catalog role names
+  // The caller's global roles, as permission catalog role names
   // ("compliance-admin", "site-admin"). A role that holds audit.read reads
   // every group; names the catalog doesn't know grant nothing.
   repeated string roles = 2;
